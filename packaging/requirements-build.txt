@@ -1,0 +1,13 @@
+# 构建独立可执行文件所需的 Python 依赖
+# 用于离线 wheelhouse：
+#   pip download -r packaging/requirements-build.txt -d wheels/
+#   pip install --no-index --find-links wheels/ -r packaging/requirements-build.txt
+segno>=1.6
+zxing-cpp>=3.1
+pillow>=10
+mss>=9.0
+click>=8.1
+reportlab>=4
+charset-normalizer>=3.3
+reedsolo>=1.7
+pyinstaller>=6.20

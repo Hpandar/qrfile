@@ -1,0 +1,24 @@
+# 构建产物
+build/
+dist/
+*.spec
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.eggs/
+.pytest_cache/
+.hypothesis/
+.venv/
+venv/
+
+# 编辑器
+.vscode/
+.idea/
+*.swp
+
+# 运行时产物
+.qrfile-session.json
+qrfile-debug.png
+_dxcam_*.png

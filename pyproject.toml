@@ -1,0 +1,47 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "qrfile"
+version = "0.5.1"
+description = "文本文件 ⇄ 二维码 双向转码工具：字节级一致、源文件只读、每步自验证"
+readme = "README.md"
+requires-python = ">=3.11"
+license = { text = "MIT" }
+dependencies = [
+    "click>=8.1",
+    "segno>=1.6",
+    # 解码器唯一可用选项。opencv 的 QRCodeDetector 在密集码上通过率是 0，
+    # 绝不要把它塞进降级链 —— 详见方案第六章。
+    "zxing-cpp>=3.1",
+    "pillow>=10",
+    "reportlab>=4",
+    "charset-normalizer>=3.3",
+    "reedsolo>=1.7",
+    # 跨平台抓屏：Windows / X11 通用；Wayland 会回退到 grim
+    "mss>=9.0",
+    # Windows 上优先用 DXGI（Desktop Duplication）抓屏：
+    # VNC / RDP 客户端常用 DirectX 渲染，BitBlt 会拿到旧帧或黑屏。
+    "numpy>=1.24; sys_platform == 'win32'",
+    "dxcam>=0.0.5; sys_platform == 'win32'",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=8", "hypothesis>=6"]
+#: 按窗口标题定位采集区域（qrfile recv --window）
+window = ["pygetwindow>=0.0.9"]
+#: 从现成视频文件抽帧（qrfile decode-video）
+video = ["opencv-python-headless>=4.8"]
+#: 更快的二维码渲染（没有 numpy 时有 PNG 渲染兜底）
+fast = ["numpy>=1.24"]
+
+[project.scripts]
+qrfile = "qrfile.cli:main"
+
+[tool.setuptools.packages.find]
+include = ["qrfile*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q"
