@@ -55,8 +55,7 @@ from .session import (
     SessionRecord,
     format_ranges,
     load_session,
-    pages_for_indices,
-    parse_ranges,
+    interval_pages,
     save_session,
 )
 
@@ -73,7 +72,7 @@ def _echo(message: str = "") -> None:
 
 
 def _print_repair_hint(total_chunks: int) -> None:
-    """播放器退出后打印补播命令模板，方便直接复制。"""
+    """播放器退出后打印区间播放命令模板，方便直接复制。"""
     raw = Path(sys.argv[0]).name
     if raw and not raw.endswith(".py") and "qrfile" in raw.lower():
         invocation = f"./{raw}"
@@ -82,9 +81,11 @@ def _print_repair_hint(total_chunks: int) -> None:
 
     _echo("")
     _echo("=" * 60)
-    _echo(f"本次共 {total_chunks} 片。如果接收端提示缺片，执行补播：")
-    _echo(f'  {invocation} push --repair "<缺片范围>"')
-    _echo(f'  例：{invocation} push --repair "12-14,204"')
+    _echo(f"本次共 {total_chunks} 片。如果接收端提示缺片：")
+    _echo("  播放器还没退出时，在底部「播放区间」输入框里填缺片范围，回车生效。")
+    _echo("  已经退出则执行区间播放命令：")
+    _echo(f'    {invocation} push --repair "<缺片范围>"')
+    _echo(f'    例：{invocation} push --repair "12-14,204"')
     _echo("=" * 60)
 
 
@@ -228,7 +229,7 @@ def _send_repair(
     accurate_mask: bool,
     keep_awake: bool = True,
 ) -> None:
-    """只补播指定的分片 —— 不再整轮重来。"""
+    """只播放指定的分片区间 —— 不再整轮重来。"""
     if not record.files:
         raise InputError("会话存档缺少文件列表（旧版本生成），请重新完整播放一次")
 
@@ -243,7 +244,7 @@ def _send_repair(
         chunk_size=record.chunk_size,
     )
     if manifest.archive_sha256 != record.manifest.archive_sha256:
-        raise VerificationError("源文件内容已经变化，无法补播。请重新完整播放一次。")
+        raise VerificationError("源文件内容已经变化，无法按区间播放。请重新完整播放一次。")
     if len(blob) != record.manifest.blob_size:
         raise VerificationError(
             f"源文件总大小变了（存档 {record.manifest.blob_size}，现在 {len(blob)}）"
@@ -259,21 +260,19 @@ def _send_repair(
     )
     if plan.total != record.total_frames:
         raise VerificationError(
-            f"补播重建出的分片数（{plan.total}）与原始会话（{record.total_frames}）不一致"
+            f"按区间重建出的分片数（{plan.total}）与原始会话（{record.total_frames}）不一致"
         )
     if plan.manifest.to_bytes() != record.manifest.to_bytes():
-        raise VerificationError("补播重建出的清单与原始会话不一致")
+        raise VerificationError("按区间重建出的清单与原始会话不一致")
 
-    indices = parse_ranges(ranges_text)
-    if any(index >= plan.total for index in indices):
-        raise InputError(f"分片号超出范围：本次会话共 {plan.total} 片（0..{plan.total - 1}）")
-    pages = pages_for_indices(indices, record.layout.per_screen)
+    indices, pages = interval_pages(ranges_text, plan.total, record.layout.per_screen)
     if not pages:
         raise InputError("给定的分片范围映射不到任何页")
 
     mask = None if (camera or accurate_mask) else 3
-    _echo(f"补播：{format_ranges(indices)} → {len(pages)} 页（会话 {plan.session_hex}）")
-    _echo("接收端保持运行；补播结束后按 Esc 退出。")
+    _echo(f"播放区间：{format_ranges(indices)} → {len(pages)} 页（会话 {plan.session_hex}）")
+    _echo("接收端保持运行；结束后按 Esc 退出。")
+    _echo("播放中可在底部「播放区间」输入框修改（留空回车恢复完整播放）。")
     if duration > 0:
         _echo(f"自动退出：{duration / 60:.0f} 分钟后（--duration 0 可关闭）")
 
@@ -302,6 +301,8 @@ def _send_repair(
             mask=mask,
             pages=pages,
             shuffle=False,
+            status_note=f"播放区间 {format_ranges(indices, limit=8)}",
+            interval_text=ranges_text,
         ).run(duration=duration)
     finally:
         awake.stop()
@@ -349,7 +350,7 @@ def _send_impl(
         roots = [absolute for _relative, absolute in record.files] or list(record.sources)
 
     if not roots:
-        raise InputError("请给一个文件/目录；补播用 --repair <分片范围>")
+        raise InputError("请给一个文件/目录；只播放指定区间用 --repair <分片范围>")
 
     before = None
     if not no_source_guard:
@@ -433,10 +434,10 @@ def _send_impl(
                         files=files,
                     ),
                 )
-                _echo(f"会话存档：{session_path}（补播用）")
+                _echo(f"会话存档：{session_path}（区间播放用）")
             except OSError as exc:
                 # 写不了存档绝不能影响正常播放
-                _warn(f"会话存档写不了（{exc}）；本次传输不受影响，但补播不可用。")
+                _warn(f"会话存档写不了（{exc}）；本次传输不受影响，但命令行区间播放不可用。")
 
         pages = layout.page_count(plan.total)
         # 固定掩码让渲染快约 4.8 倍；拍屏（--camera）换回最优掩码保稳。
@@ -491,7 +492,7 @@ def _send_impl(
 
         _echo("")
         _echo("接收端命令：qrfile recv <输出目录>")
-        _echo("播放中：空格 暂停，←/→ 手动切屏，↑/↓ 调速，Esc 退出")
+        _echo("播放中：空格 暂停，↑/↓ 调速，底部输入框填播放区间，Esc 退出")
         _echo("")
         awake = KeepAwake()
         if keep_awake:
@@ -526,9 +527,9 @@ def _send_impl(
 @click.argument("sources", nargs=-1, required=False, type=click.Path(exists=True))
 @click.option("--ecc", type=click.Choice(["auto", "L", "M", "Q", "H"]), default="auto",
               show_default=True, help="纠错等级；auto 时截图用 M、拍屏用 H")
-@click.option("--mode", type=click.Choice(["auto", "single"]), default="single",
+@click.option("--mode", type=click.Choice(["auto", "single"]), default="auto",
               show_default=True,
-              help="single=一屏一码（默认，最稳）；auto=按屏幕分辨率自动选最多码数")
+              help="auto=一屏多码（默认，吞吐最大）；single=一屏一码（最稳）")
 @click.option("--module-px", type=int, default=None, help="每模块像素；默认自动在 4~8 之间选")
 @click.option("--screen", "screen_size", default="auto", show_default="自动探测", metavar="WxH")
 @click.option("--fps", type=float, default=5.0, show_default=True, help="播放帧率")
@@ -541,7 +542,7 @@ def _send_impl(
 @click.option("--duration", type=float, default=1800.0, show_default=True,
               help="多少秒后自动停止；0=一直循环（默认 30 分钟，防卡死）")
 @click.option("--repair", default=None, metavar="RANGES",
-              help="只补播缺失分片，例如 12-14,204（需先正常播放过一次）")
+              help="只播放指定分片区间，例如 12-14,204（需先正常播放过一次）")
 @click.option("--session-file", default=None, metavar="PATH", hidden=True)
 @click.option("--keep-awake/--no-keep-awake", default=True, hidden=True)
 @click.option("--dump-pages", type=click.Path(file_okay=False), default=None,
@@ -556,7 +557,7 @@ def send_cmd(**kwargs) -> None:
     """高级命令：手动调参播放。日常请直接用 ``qrfile push <路径>``。"""
     sources = kwargs.get("sources")
     if not sources and not kwargs.get("repair"):
-        raise click.UsageError("请给一个文件/目录，或用 --repair 补播缺失分片")
+        raise click.UsageError("请给一个文件/目录，或用 --repair 播放指定区间")
     _run(lambda: _send_impl(kwargs.pop("sources"), **kwargs))
 
 
@@ -659,7 +660,7 @@ def _receive_loop(
                 _progress_line(collector.progress())
                 last_draw = now
 
-            # 每 5 秒把"缺哪几片"打出来，方便直接复制去补播
+            # 每 5 秒把"缺哪几片"打出来，方便直接复制到播放器里
             if collector.total and now - last_missing >= 5.0:
                 missing_now = collector.missing()
                 if missing_now:
@@ -709,10 +710,12 @@ def _receive_loop(
             shown = format_ranges(missing, limit=1000)
             _warn(f"还缺 {len(missing)}/{progress.total} 片：{shown}")
             _warn("=" * 60)
-            _warn("补播命令（复制下面这一行到 A 机器，保持本窗口运行）：")
-            _warn(f'  qrfile push --repair "{shown}"')
+            _warn("播放区间（保持本窗口运行）：")
+            _warn("  1) 在 A 机器播放器底部的「播放区间」输入框填入上面的范围，回车；")
+            _warn("  2) 或退出播放器后，在 A 机器执行：")
+            _warn(f'     qrfile push --repair "{shown}"')
             _warn("=" * 60)
-            _warn("补播结束后，本窗口会继续接收并自动还原。")
+            _warn("区间播放结束后，本窗口会继续接收并自动还原。")
         sys.exit(EXIT_VERIFY_FAILED)
 
     _restore(
@@ -802,14 +805,16 @@ def _pull_impl(
 
 @click.command("push")
 @click.argument("sources", nargs=-1, required=False, type=click.Path(exists=True))
-@click.option("--fast", is_flag=True, help="一屏多码，快 2~3 倍")
-@click.option("--safe", is_flag=True, help="更稳：一屏一码 + 更大模块（远端画面被缩放时用）")
-@click.option("--camera", is_flag=True, help="用手机拍屏（ECC H + 最优掩码）")
+@click.option("--fast", is_flag=True,
+              help="一屏多码（现在已是默认，保留兼容）")
+@click.option("--safe", is_flag=True,
+              help="更稳：一屏一码 + 更大模块（远端画面被缩放时用）")
+@click.option("--camera", is_flag=True, help="用手机拍屏（ECC H + 最优掩码 + 一屏一码）")
 @click.option("--keep-awake/--no-keep-awake", default=True, hidden=True)
 @click.option("--duration", type=float, default=1800.0, show_default=True,
               help="多少秒后自动停；0=一直循环（默认 30 分钟，防卡死）")
 @click.option("--repair", default=None, metavar="RANGES",
-              help="只补播缺失分片，例如 12-14,204（保持接收端运行）")
+              help="只播放指定分片区间，例如 12-14,204（保持接收端运行）")
 def push_cmd(
     sources,
     fast: bool,
@@ -827,7 +832,7 @@ def push_cmd(
             lambda: _send_impl(
                 (),
                 ecc="auto",
-                mode="single",
+                mode="auto",
                 module_px=None,
                 screen_size="auto",
                 fps=5.0,
@@ -853,13 +858,14 @@ def push_cmd(
         return
 
     if not sources:
-        raise click.UsageError("请给一个文件/目录，或用 --repair 补播缺失分片")
+        raise click.UsageError("请给一个文件/目录，或用 --repair 播放指定区间")
     if fast and safe:
         raise click.UsageError("--fast 和 --safe 只能二选一")
     if camera and fast:
         raise click.UsageError("--camera 和 --fast 不能同时用")
 
-    mode = "auto" if fast else "single"
+    # 默认 fast：一屏多码。--safe / --camera 退回一屏一码保稳。
+    mode = "single" if (safe or camera) else "auto"
     module_px = 6 if (safe or camera) else None
     ecc = "H" if (safe or camera) else "auto"
     fps = 3.0 if camera else (4.0 if safe else 5.0)

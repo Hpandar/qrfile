@@ -245,8 +245,41 @@ def test_parse_and_format_ranges() -> None:
         parse_ranges("")
 
 
+def test_interval_pages_helper() -> None:
+    from qrfile.session import interval_pages
+
+    indices, pages = interval_pages("12-14,204", total_chunks=500, per_screen=8)
+    assert indices == [12, 13, 14, 204]
+    assert pages == [1, 25]
+
+    # 直接粘贴接收端打印的整行也能用
+    _indices, pages = interval_pages("缺 37 片：12-14,204", total_chunks=500, per_screen=8)
+    assert pages == [1, 25]
+
+    with pytest.raises(InputError, match="超出范围"):
+        interval_pages("500", total_chunks=500, per_screen=8)
+
+
+def test_producer_switches_pages_immediately() -> None:
+    """播放器里改播放区间时，渲染线程不能把旧的一轮播完。"""
+    from qrfile.player import _PageProducer
+
+    layout = choose_layout(1280, 720, ecc="M", mode="single")
+    producer = _PageProducer([b"x", b"y"], layout, pages=[0])
+    assert producer._order() == [0]
+
+    producer.out.put((0, object()))  # 模拟已经排队、还没显示的旧页
+    producer.set_pages([3, 2])
+    assert producer._order() == [3, 2]
+    with pytest.raises(Exception):
+        producer.out.get_nowait()  # 旧页已被丢弃
+
+    producer.set_pages(None)
+    assert producer._order() == [0, 1]
+
+
 def test_repair_rebuild_is_byte_identical(tmp_path: Path) -> None:
-    """补播必须能重建出与原始播放完全相同的分片。"""
+    """按区间播放必须能重建出与原始播放完全相同的分片。"""
     from qrfile.livescan import read_files, scan_all
     from qrfile.session import SessionRecord, load_session, save_session
 
@@ -384,6 +417,22 @@ def _fake_sender(monkeypatch):
 
     monkeypatch.setattr(live_cli, "_send_impl", fake_send)
     return live_cli, captured
+
+
+def test_push_defaults_to_fast(tmp_path, monkeypatch) -> None:
+    """不加任何开关时默认就是一屏多码。"""
+    from click.testing import CliRunner
+
+    live_cli, captured = _fake_sender(monkeypatch)
+    sample = tmp_path / "a.txt"
+    sample.write_text("hi", encoding="utf-8")
+
+    result = CliRunner().invoke(live_cli.push_cmd, [str(sample)])
+    assert result.exit_code == 0, result.output
+    assert captured["mode"] == "auto"
+    assert captured["module_px"] is None
+    assert captured["fps"] == 5.0
+    assert captured["camera"] is False
 
 
 def test_push_fast_preset(tmp_path, monkeypatch) -> None:

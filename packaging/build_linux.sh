@@ -21,7 +21,12 @@ if ! command -v "$PYTHON" >/dev/null 2>&1; then
 fi
 
 # 播放器需要 tkinter。没有它，send/push 打不开全屏窗口。
-if ! "$PYTHON" -c "import tkinter" >/dev/null 2>&1; then
+# 已有 .venv 时以它的解释器为准（它可能和 $PYTHON 不是同一个）。
+CHECK_PYTHON="$PYTHON"
+if [ -x .venv/bin/python ]; then
+  CHECK_PYTHON=".venv/bin/python"
+fi
+if ! "$CHECK_PYTHON" -c "import tkinter" >/dev/null 2>&1; then
   cat >&2 <<'EOF'
 缺少 tkinter（全屏播放器需要）。按发行版安装：
   Debian/Ubuntu: sudo apt install python3-tk

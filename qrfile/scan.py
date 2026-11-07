@@ -67,7 +67,7 @@ class ScanResult:
     skipped: tuple[ScanIssue, ...] = ()
     collisions: tuple[tuple[str, ...], ...] = ()
     total_bytes: int = 0
-    #: 与 sources 一一对应的绝对路径。实时链路用它生成补播存档。
+    #: 与 sources 一一对应的绝对路径。实时链路用它生成区间播放存档。
     absolute_paths: tuple[str, ...] = ()
 
     @property

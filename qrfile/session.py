@@ -1,4 +1,4 @@
-"""会话存档：让「补播缺失分片」能重建出与原始播放完全一致的分片。
+"""会话存档：让「只播放指定分片区间」能重建出与原始播放完全一致的分片。
 
 为什么需要存档而不是"重新跑一遍同样的命令"：
 
@@ -8,7 +8,7 @@
 
 任何一处不同，分片边界就会移位，接收端手里的旧分片就对不上了。所以正常播放
 时把「清单原文 + 会话号 + 分片大小 + 两段的压缩方法 + 布局」落一个 JSON，
-补播时按存档原样重建。
+按区间播放时按存档原样重建。
 """
 
 from __future__ import annotations
@@ -24,7 +24,7 @@ from .livelayout import Layout
 from .manifest import Manifest
 
 SESSION_FORMAT = "qrfile-session/1"
-#: 默认写在当前工作目录。补播命令要在同一个目录下执行。
+#: 默认写在当前工作目录。区间播放命令要在同一个目录下执行。
 DEFAULT_SESSION_FILE = ".qrfile-session.json"
 
 
@@ -40,7 +40,7 @@ class SessionRecord:
     manifest: Manifest
     sources: tuple[str, ...]
     total_frames: int
-    #: 每个源文件的 ``(相对路径, 绝对路径)``。补播时按这个精确读回，
+    #: 每个源文件的 ``(相对路径, 绝对路径)``。按区间播放时按这个精确读回，
     #: 不受 --include/--exclude 或目录变化影响。
     files: tuple[tuple[str, str], ...] = ()
 
@@ -116,7 +116,7 @@ def load_session(path: str | os.PathLike[str]) -> SessionRecord:
 
 
 # --------------------------------------------------------------------------
-# 分片范围：给「缺片」和「补播」用
+# 分片范围：给「缺片」和「播放区间」用
 # --------------------------------------------------------------------------
 
 
@@ -177,7 +177,31 @@ def format_ranges(indices: Sequence[int], *, limit: int = 40) -> str:
 
 
 def pages_for_indices(indices: Sequence[int], per_screen: int) -> list[int]:
-    """把分片号映射成页号（补播时只播这些页）。"""
+    """把分片号映射成页号（播放区间时只播这些页）。"""
     if per_screen < 1:
         raise ValueError(f"per_screen 必须为正，收到 {per_screen}")
     return sorted({index // per_screen for index in indices})
+
+
+def interval_pages(
+    text: str, total_chunks: int, per_screen: int
+) -> tuple[list[int], list[int]]:
+    """解析用户输入的缺片范围，返回 ``(分片号, 页号)``。
+
+    播放器底部的「播放区间」输入框用它做校验和映射；分片号越界时直接报错，
+    避免用户辛苦敲完才发现范围写错。也容忍直接粘贴接收端的整行输出
+    （``"缺 37 片：12-18,204"``）。
+    """
+    cleaned = text.strip()
+    if "片" in cleaned:
+        for separator in ("：", ":"):
+            if separator in cleaned:
+                cleaned = cleaned.split(separator, 1)[1]
+                break
+    indices = parse_ranges(cleaned)
+    if any(index >= total_chunks for index in indices):
+        raise InputError(
+            f"分片号超出范围：本次会话共 {total_chunks} 片"
+            f"（0..{total_chunks - 1}）"
+        )
+    return indices, pages_for_indices(indices, per_screen)

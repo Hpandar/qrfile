@@ -35,7 +35,7 @@ LIVE_LIMITS = ScanLimits(
 
 
 def read_files(files: Sequence[tuple[str, str]]) -> list[FileSource]:
-    """按 ``(相对路径, 绝对路径)`` 精确读取一批文件 —— 补播用。
+    """按 ``(相对路径, 绝对路径)`` 精确读取一批文件 —— 区间播放用。
 
     不重新遍历目录、不重新套 include/exclude，保证读到的就是原始会话里的
     同一批文件、同样的相对路径。

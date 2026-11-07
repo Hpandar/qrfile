@@ -172,7 +172,7 @@ class SessionPlan:
     #: 压缩后的数据段 / 清单段字节数（给 CLI 报"压到多少"用）
     data_bytes: int = 0
     manifest_bytes: int = 0
-    #: 两段各自实际用的压缩方法 —— 补播时要原样复现
+    #: 两段各自实际用的压缩方法 —— 区间播放时要原样复现
     data_compression: str = COMPRESSION_NONE
     manifest_compression: str = COMPRESSION_NONE
 
@@ -224,8 +224,8 @@ def build_session(
     ``auto`` 会把所有压缩器都跑一遍取最小的 —— **直接决定要出多少张码**，
     所以默认就选它。
 
-    ``manifest_compression`` 用于**补播**：正常播放时两段各自用 ``auto`` 挑了
-    可能不同的方法；补播必须原样复现，否则分片边界会移位。把它设成清单段
+    ``manifest_compression`` 用于**区间播放**：正常播放时两段各自用 ``auto`` 挑了
+    可能不同的方法；区间播放必须原样复现，否则分片边界会移位。把它设成清单段
     当时实际用的方法即可。
     """
     if chunk_size < 1:

@@ -26,6 +26,7 @@
 from __future__ import annotations
 
 import argparse
+import os
 import shutil
 import subprocess
 import sys
@@ -34,6 +35,23 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 NAME = "qrfile"
 LAUNCHER = ROOT / "packaging" / "launcher.py"
+
+
+def _tcl_tk_binaries() -> list[tuple[Path, str]]:
+    """收集 Python 发行版自带的 Tcl/Tk 共享库。
+
+    uv / python-build-standalone 把 ``libtcl9.0.so``、``libtcl9tk9.0.so``
+    放在 ``<base_prefix>/lib``，而 ``_tkinter`` 没有指向那里的 RPATH，
+    PyInstaller 的静态分析找不到它们。产物运行起来就变成"tkinter 不可用"，
+    ``push`` 打不开全屏窗口。这里显式补进产物根目录。
+    """
+    if not sys.platform.startswith("linux"):
+        return []
+    libdir = Path(sys.base_prefix) / "lib"
+    if not libdir.is_dir():
+        return []
+    candidates = sorted(libdir.glob("libtcl*.so*")) + sorted(libdir.glob("libtk*.so*"))
+    return [(path, ".") for path in candidates]
 
 #: 确认过用不到的大块头。加了能显著减小体积；加错会在构建后的自检里暴露。
 EXCLUDES = [
@@ -96,6 +114,8 @@ def build(*, onedir: bool, clean: bool, verify: bool) -> int:
     ]
     for module in EXCLUDES:
         command += ["--exclude-module", module]
+    for path, destination in _tcl_tk_binaries():
+        command += ["--add-binary", f"{path}{os.pathsep}{destination}"]
     command.append(str(LAUNCHER))
 
     print("构建中：", " ".join(command[:6]), "…")

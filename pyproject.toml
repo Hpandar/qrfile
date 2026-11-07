@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "qrfile"
-version = "0.5.1"
+version = "0.6.0"
 description = "文本文件 ⇄ 二维码 双向转码工具：字节级一致、源文件只读、每步自验证"
 readme = "README.md"
 requires-python = ">=3.11"
