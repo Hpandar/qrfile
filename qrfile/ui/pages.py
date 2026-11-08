@@ -5,8 +5,8 @@ from __future__ import annotations
 import os
 from pathlib import Path
 
-from PySide6.QtCore import QSettings, Qt, Signal
-from PySide6.QtGui import QGuiApplication
+from PySide6.QtCore import QSettings, Qt, QUrl, Signal
+from PySide6.QtGui import QDesktopServices, QGuiApplication
 from PySide6.QtWidgets import (
     QCheckBox,
     QComboBox,
@@ -20,14 +20,17 @@ from PySide6.QtWidgets import (
     QListWidgetItem,
     QMessageBox,
     QPlainTextEdit,
+    QProgressBar,
     QPushButton,
     QSpinBox,
     QVBoxLayout,
     QWidget,
 )
 
+from ..capture import list_monitors
 from ..errors import InputError
 from ..session import interval_pages
+from .theme import RECV_COLOR, SEND_COLOR
 from .widgets import Card, Chip, ChunkMap, EventLog, PageHeader, ProgressRing, StatRow
 
 
@@ -136,7 +139,7 @@ class HomePage(QWidget):
             self._role_card(
                 "发", "发送机器", "把文件播出去",
                 "选择文件或目录，全屏循环播放二维码。适合被隔离的那台机器。",
-                "开始发送  →", "primary", "info", self.send_requested.emit,
+                "开始发送  →", "primary", "send", self.send_requested.emit,
             ),
             1,
         )
@@ -144,7 +147,7 @@ class HomePage(QWidget):
             self._role_card(
                 "收", "接收机器", "把文件收回来",
                 "自动定位远程桌面窗口，截屏、解码、校验并还原文件树。",
-                "开始接收  →", "ghost", "ok", self.receive_requested.emit,
+                "开始接收  →", "recv", "recv", self.receive_requested.emit,
             ),
             1,
         )
@@ -192,10 +195,16 @@ class HomePage(QWidget):
         mark = QLabel(mark_text)
         mark.setFixedSize(40, 36)
         mark.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        mark.setStyleSheet(
-            "background:#e0f2fe;color:#075985;border-radius:10px;"
-            "font-weight:800;font-size:14pt;"
-        )
+        if chip_kind == "recv":
+            mark.setStyleSheet(
+                "background:#dcfce7;color:#166534;border-radius:10px;"
+                "font-weight:800;font-size:14pt;"
+            )
+        else:
+            mark.setStyleSheet(
+                "background:#e0f2fe;color:#075985;border-radius:10px;"
+                "font-weight:800;font-size:14pt;"
+            )
         top.addWidget(mark)
         top.addStretch(1)
         top.addWidget(Chip(chip_text, chip_kind))
@@ -389,6 +398,19 @@ class ReceivePage(QWidget):
         self.safe = QCheckBox("稳健解码（远端画面被缩放、识别率低时勾选）")
         options_layout.addWidget(self.safe)
 
+        screen_row = QHBoxLayout()
+        screen_row.addWidget(muted("接收屏幕"))
+        self.screen = QComboBox()
+        self.screen.currentIndexChanged.connect(self._sync_screen_fields)
+        refresh = button("刷新")
+        refresh.clicked.connect(self._load_monitors)
+        screen_row.addWidget(self.screen, 1)
+        screen_row.addWidget(refresh)
+        options_layout.addLayout(screen_row)
+        options_layout.addWidget(
+            muted("多屏时选择接收哪一块；自动会优先寻找远程桌面窗口。", faint=True)
+        )
+
         window_row = QHBoxLayout()
         window_row.addWidget(muted("目标窗口标题"))
         self.window = QLineEdit()
@@ -407,10 +429,38 @@ class ReceivePage(QWidget):
         root.addStretch(1)
         actions = QHBoxLayout()
         actions.addStretch(1)
-        start = button("开始接收  →", "primary")
+        start = button("开始接收  →", "recv")
         start.clicked.connect(self._start)
         actions.addWidget(start)
         root.addLayout(actions)
+
+        self._load_monitors()
+
+    def _load_monitors(self) -> None:
+        current = self.screen.currentData() if self.screen.count() else None
+        self.screen.blockSignals(True)
+        self.screen.clear()
+        self.screen.addItem("自动（窗口 / 整屏）", None)
+        try:
+            for monitor in list_monitors():
+                self.screen.addItem(monitor.describe(), monitor.index)
+        except InputError as exc:
+            self.screen.setToolTip(f"无法枚举显示器：{exc}")
+        self.screen.blockSignals(False)
+
+        if current is not None:
+            index = self.screen.findData(current)
+            if index >= 0:
+                self.screen.setCurrentIndex(index)
+        self._sync_screen_fields()
+
+    def _sync_screen_fields(self) -> None:
+        selected = self.screen.currentData() is not None
+        self.window.setEnabled(not selected)
+        self.region.setEnabled(not selected)
+        if selected:
+            self.window.clear()
+            self.region.clear()
 
     def _pick_dir(self) -> None:
         path = QFileDialog.getExistingDirectory(self, "选择接收目录")
@@ -437,6 +487,7 @@ class ReceivePage(QWidget):
                 "safe": self.safe.isChecked(),
                 "window": self.window.text().strip(),
                 "region": self.region.text().strip(),
+                "screen": self.screen.currentData(),
             }
         )
 
@@ -449,6 +500,8 @@ class ReceivePage(QWidget):
 class SendMonitorPage(QWidget):
     command = Signal(str)
     stop_requested = Signal()
+    resume_requested = Signal()
+    interval_requested = Signal(str)
 
     def __init__(self, parent=None) -> None:
         super().__init__(parent)
@@ -478,7 +531,7 @@ class SendMonitorPage(QWidget):
 
         progress_card, progress_layout = card_with_title("本轮进度")
         ring_row = QHBoxLayout()
-        self.ring = ProgressRing()
+        self.ring = ProgressRing(color=SEND_COLOR)
         ring_row.addWidget(self.ring, 0, Qt.AlignmentFlag.AlignCenter)
         progress_layout.addLayout(ring_row)
         self.frames_stat = StatRow("已播放分片", "—")
@@ -490,10 +543,10 @@ class SendMonitorPage(QWidget):
         cards.addWidget(progress_card, 2)
 
         map_card, map_layout = card_with_title("页面覆盖")
-        self.chunk_map = ChunkMap()
+        self.chunk_map = ChunkMap(received_color=SEND_COLOR)
         map_layout.addWidget(self.chunk_map, 1)
         legend = QHBoxLayout()
-        legend.addWidget(muted("绿色 = 已播放", faint=True))
+        legend.addWidget(muted("蓝色 = 已播放", faint=True))
         legend.addWidget(muted("灰色 = 未播放", faint=True))
         legend.addStretch(1)
         map_layout.addLayout(legend)
@@ -504,7 +557,7 @@ class SendMonitorPage(QWidget):
         self.interval_input.setPlaceholderText("例如 12-14,204；留空 = 全部")
         interval_layout.addWidget(self.interval_input)
         interval_row = QHBoxLayout()
-        apply_button = button("应用", "primary")
+        apply_button = button("应用并播放", "primary")
         apply_button.clicked.connect(self._apply_interval)
         edit_button = button("高级…")
         edit_button.clicked.connect(self._open_interval_dialog)
@@ -521,8 +574,12 @@ class SendMonitorPage(QWidget):
         controls.addStretch(1)
         self.pause_button = button("暂停", "ghost")
         self.pause_button.clicked.connect(self._toggle_pause)
+        self.resume_button = button("继续播放", "primary")
+        self.resume_button.setVisible(False)
+        self.resume_button.clicked.connect(lambda: self.resume_requested.emit())
         self.stop_button = button("停止播放", "danger")
         self.stop_button.clicked.connect(self.stop_requested.emit)
+        controls.addWidget(self.resume_button)
         controls.addWidget(self.pause_button)
         controls.addWidget(self.stop_button)
         root.addLayout(controls)
@@ -536,7 +593,7 @@ class SendMonitorPage(QWidget):
         self.per_screen = 1
         self.last_page = -1
         self._paused = False
-        self.header.chip.set_status("启动中", "info")
+        self.header.chip.set_status("启动中", "send")
         self.state_label.setText("正在准备分片…")
         self.page_label.setText("—")
         self.ring.set_value(0)
@@ -548,6 +605,7 @@ class SendMonitorPage(QWidget):
         self.interval_info.setText("一屏多码时会自动映射到整页。")
         self.pause_button.setText("暂停")
         self.pause_button.setEnabled(False)
+        self.resume_button.setVisible(False)
         self.stop_button.setEnabled(True)
         self.events.clear()
 
@@ -582,9 +640,9 @@ class SendMonitorPage(QWidget):
     def set_state(self, data: dict) -> None:
         state = data.get("state", "")
         mapping = {
-            "preparing": ("准备中", "info"),
-            "playing": ("播放中", "ok"),
-            "completed": ("已完成", "ok"),
+            "preparing": ("准备中", "send"),
+            "playing": ("播放中", "send"),
+            "completed": ("已完成", "send"),
             "cancelled": ("已停止", "warn"),
         }
         text, kind = mapping.get(state, (state or "运行中", "info"))
@@ -612,7 +670,7 @@ class SendMonitorPage(QWidget):
 
     def _apply_interval(self) -> None:
         text = self.interval_input.text().strip()
-        self.command.emit(f"interval {text}".rstrip())
+        self.interval_requested.emit(text)
         self.events.append_line(f"[界面] 应用播放区间：{text or '全部'}")
 
     def _open_interval_dialog(self) -> None:
@@ -635,9 +693,11 @@ class SendMonitorPage(QWidget):
         self.stop_button.setEnabled(False)
         self.pause_button.setEnabled(False)
         if code == 0:
-            self.header.chip.set_status("播放结束", "ok")
+            self.header.chip.set_status("播放结束", "send")
         else:
             self.header.chip.set_status("已结束", "warn")
+        self.resume_button.setVisible(True)
+        self.resume_button.setEnabled(True)
         self.events.append_line(f"[进程] 播放器退出，代码 {code}")
 
 
@@ -654,6 +714,7 @@ class ReceiveMonitorPage(QWidget):
         self.total = 0
         self.missing: set[int] = set()
         self.ranges = ""
+        self._output_path = ""
 
         root = QVBoxLayout(self)
         root.setContentsMargins(0, 0, 0, 0)
@@ -674,7 +735,7 @@ class ReceiveMonitorPage(QWidget):
         cards.setSpacing(14)
 
         progress_card, progress_layout = card_with_title("已接收分片")
-        self.ring = ProgressRing()
+        self.ring = ProgressRing(color=RECV_COLOR)
         progress_layout.addWidget(self.ring, 0, Qt.AlignmentFlag.AlignCenter)
         self.received_stat = StatRow("已接收", "—")
         self.missing_stat = StatRow("缺失", "—")
@@ -685,7 +746,7 @@ class ReceiveMonitorPage(QWidget):
         cards.addWidget(progress_card, 2)
 
         map_card, map_layout = card_with_title("分片覆盖")
-        self.chunk_map = ChunkMap()
+        self.chunk_map = ChunkMap(received_color=RECV_COLOR)
         map_layout.addWidget(self.chunk_map, 1)
         legend = QHBoxLayout()
         legend.addWidget(muted("绿色 = 已接收", faint=True))
@@ -704,7 +765,7 @@ class ReceiveMonitorPage(QWidget):
         self.missing_input.setPlaceholderText("缺片范围会显示在这里")
         missing_layout.addWidget(self.missing_input)
         copy_row = QHBoxLayout()
-        copy_button = button("复制区间", "primary")
+        copy_button = button("复制区间", "recv")
         copy_button.clicked.connect(self._copy_missing)
         help_button = button("怎么用？")
         help_button.clicked.connect(self._show_help)
@@ -717,6 +778,24 @@ class ReceiveMonitorPage(QWidget):
         missing_layout.addStretch(1)
         cards.addWidget(missing_card, 2)
         root.addLayout(cards, 3)
+
+        self.restore_bar = QProgressBar()
+        self.restore_bar.setObjectName("recvProgress")
+        self.restore_bar.setTextVisible(True)
+        self.restore_bar.setVisible(False)
+        root.addWidget(self.restore_bar)
+
+        self.done_label = QLabel("")
+        self.done_label.setObjectName("successBanner")
+        self.done_label.setWordWrap(True)
+        self.done_label.setVisible(False)
+        self.open_button = button("打开目录", "recv")
+        self.open_button.setVisible(False)
+        self.open_button.clicked.connect(self._open_output)
+        done_row = QHBoxLayout()
+        done_row.addWidget(self.done_label, 1)
+        done_row.addWidget(self.open_button)
+        root.addLayout(done_row)
 
         controls = QHBoxLayout()
         controls.addStretch(1)
@@ -732,7 +811,8 @@ class ReceiveMonitorPage(QWidget):
         self.total = 0
         self.missing = set()
         self.ranges = ""
-        self.header.chip.set_status("启动中", "info")
+        self._output_path = ""
+        self.header.chip.set_status("启动中", "recv")
         self.window_label.setText("窗口：正在定位…")
         self.progress_label.setText("—")
         self.ring.set_value(0)
@@ -745,8 +825,41 @@ class ReceiveMonitorPage(QWidget):
         self.missing_label.style().polish(self.missing_label)
         self.missing_label.setText("等待数据…")
         self.missing_input.clear()
+        self.restore_bar.setVisible(False)
+        self.restore_bar.setRange(0, 1)
+        self.restore_bar.setValue(0)
+        self.done_label.setVisible(False)
+        self.done_label.clear()
+        self.open_button.setVisible(False)
         self.stop_button.setEnabled(True)
         self.events.clear()
+
+    def set_restore_progress(self, data: dict) -> None:
+        done = int(data.get("written", 0))
+        total = int(data.get("total", 0))
+        path = str(data.get("path", ""))
+        self.header.chip.set_status("还原中", "recv")
+        self.restore_bar.setVisible(True)
+        self.restore_bar.setRange(0, max(1, total))
+        self.restore_bar.setValue(done)
+        self.restore_bar.setFormat(f"还原 {done}/{total}")
+        if path:
+            self.progress_label.setText(f"正在还原：{path}")
+
+    def _open_output(self) -> None:
+        if not self._output_path:
+            return
+        target = Path(self._output_path)
+        if target.is_file():
+            target = target.parent
+        QDesktopServices.openUrl(QUrl.fromLocalFile(str(target)))
+
+    def set_countdown(self, seconds: int) -> None:
+        if seconds > 0:
+            self.header.chip.set_status(f"{seconds} 秒后开始", "recv")
+            self.progress_label.setText("准备接收…")
+        else:
+            self.header.chip.set_status("接收中", "recv")
 
     def set_window(self, data: dict) -> None:
         description = data.get("description") or "整个屏幕"
@@ -787,9 +900,10 @@ class ReceiveMonitorPage(QWidget):
     def set_state(self, data: dict) -> None:
         state = data.get("state", "")
         mapping = {
-            "receiving": ("接收中", "info"),
-            "verifying": ("校验中", "warn"),
-            "completed": ("完成", "ok"),
+            "receiving": ("接收中", "recv"),
+            "verifying": ("校验中", "recv"),
+            "restoring": ("还原中", "recv"),
+            "completed": ("完成", "recv"),
             "cancelled": ("已停止", "warn"),
         }
         text, kind = mapping.get(state, (state or "运行中", "info"))
@@ -806,8 +920,38 @@ class ReceiveMonitorPage(QWidget):
                 self.chunk_map.set_data(
                     self.total, received=set(range(self.total))
                 )
+            output = str(data.get("output", ""))
+            content = str(data.get("content_path") or output)
+            tops = list(data.get("top_level") or [])
+            written = int(data.get("written", 0))
+            self.restore_bar.setVisible(True)
+            self.restore_bar.setRange(0, 1)
+            self.restore_bar.setValue(1)
+            self.restore_bar.setFormat("还原完成")
+            self.progress_label.setText("还原完成")
+            self._output_path = content
+            if len(tops) == 1 or not tops:
+                text = (
+                    f"还原完成：{content}（{written} 个文件）"
+                    if content
+                    else f"还原完成（{written} 个文件）"
+                )
+            else:
+                preview = "、".join(tops[:6])
+                if len(tops) > 6:
+                    preview += "…"
+                text = (
+                    f"还原完成：{output}\n顶层条目：{preview}"
+                    f"（共 {written} 个文件）"
+                )
+            self.done_label.setText(text)
+            self.done_label.setVisible(True)
+            self.open_button.setVisible(bool(self._output_path))
         if state == "verifying":
             self.progress_label.setText("收齐，正在校验并还原…")
+        if state == "restoring":
+            self.restore_bar.setVisible(True)
+            self.progress_label.setText("正在还原文件…")
 
     def set_error(self, data: dict) -> None:
         message = str(data.get("message", "接收失败"))

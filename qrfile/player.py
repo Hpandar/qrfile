@@ -445,14 +445,28 @@ class Player:
         def report_geometry() -> None:
             # 窗口刚创建时可能还没被 WM 映射（winfo_x 会返回 -32768），延后打印
             try:
+                actual_width = root.winfo_width()
+                actual_height = root.winfo_height()
                 print(
                     f"窗口：{root.winfo_x()},{root.winfo_y()} "
-                    f"{root.winfo_width()}x{root.winfo_height()} · "
+                    f"{actual_width}x{actual_height} · "
                     f"屏幕 {root.winfo_screenwidth()}x{root.winfo_screenheight()} · "
                     f"DISPLAY={os.environ.get('DISPLAY', '')}",
                     file=sys.stderr if self.events_json else sys.stdout,
                     flush=True,
                 )
+                if actual_width + 2 < width or actual_height + 2 < height:
+                    message = (
+                        f"播放窗口 {actual_width}×{actual_height} 小于布局 "
+                        f"{width}×{height}，右侧/底部二维码可能被裁切；"
+                        f"请检查显示器缩放，或只在单块屏幕上播放。"
+                    )
+                    print(
+                        message,
+                        file=sys.stderr if self.events_json else sys.stdout,
+                        flush=True,
+                    )
+                    events.emit("warning", code="window_clipped", message=message)
             except tk.TclError:
                 pass
 
@@ -540,6 +554,10 @@ class Player:
             events.emit(
                 "interval", indices=indices, pages=pages, ranges=ranges, text=text
             )
+            # 应用区间意味着"开始播放"，即使之前按了暂停
+            state["paused"] = False
+            self.producer.paused = False
+            events.emit("paused", value=False)
             hint_label.configure(text="r/点击 编辑 · 回车应用 · 留空=全部", fg="#909090")
             leave_interval_input()
             refresh_status()
@@ -584,6 +602,9 @@ class Player:
                     ranges=format_ranges(indices, limit=25) if text else "",
                     text=text,
                 )
+                state["paused"] = False
+                self.producer.paused = False
+                events.emit("paused", value=False)
                 refresh_status()
             else:
                 events.emit(

@@ -25,6 +25,14 @@ COLORS = {
     "sidebar_active": "#172e47",
 }
 
+#: 角色色：发送统一蓝，接收统一绿，不在两个区域里混用。
+SEND_COLOR = "#0ea5e9"
+SEND_DARK = "#075985"
+SEND_SOFT = "#e0f2fe"
+RECV_COLOR = "#16a34a"
+RECV_DARK = "#166534"
+RECV_SOFT = "#dcfce7"
+
 QSS = """
 QWidget {
     color: #0f172a;
@@ -65,6 +73,12 @@ QPushButton#nav:checked {
     color: #ffffff;
     border-left: 3px solid #2dd4bf;
     padding-left: 9px;
+}
+QPushButton#nav[role="send"]:checked {
+    border-left-color: #0ea5e9;
+}
+QPushButton#nav[role="recv"]:checked {
+    border-left-color: #16a34a;
 }
 QLabel#railFoot {
     color: #6d8399;
@@ -108,6 +122,21 @@ QPushButton#primary:hover {
     background: #38bdf8;
 }
 QPushButton#primary:disabled {
+    background: #cbd5e1;
+    color: #64748b;
+}
+QPushButton#recv {
+    background: #16a34a;
+    color: #ffffff;
+    border: none;
+    border-radius: 8px;
+    padding: 9px 18px;
+    font-weight: 700;
+}
+QPushButton#recv:hover {
+    background: #22c55e;
+}
+QPushButton#recv:disabled {
     background: #cbd5e1;
     color: #64748b;
 }
@@ -175,9 +204,13 @@ QLabel#chip[kind="err"] {
     background: #fee2e2;
     color: #991b1b;
 }
-QLabel#chip[kind="info"] {
+QLabel#chip[kind="info"], QLabel#chip[kind="send"] {
     background: #e0f2fe;
     color: #075985;
+}
+QLabel#chip[kind="ok"], QLabel#chip[kind="recv"] {
+    background: #dcfce7;
+    color: #166534;
 }
 QLabel#chip[kind="muted"] {
     background: #e2e8f0;
@@ -205,6 +238,28 @@ QLabel#errorBanner {
     border-radius: 9px;
     padding: 8px 10px;
     color: #991b1b;
+}
+QLabel#successBanner {
+    background: #ecfdf5;
+    border: 1px solid #a7f3d0;
+    border-radius: 9px;
+    padding: 8px 10px;
+    color: #065f46;
+}
+QProgressBar {
+    background: #f1f5f9;
+    border: 1px solid #dbe3ec;
+    border-radius: 7px;
+    height: 20px;
+    text-align: center;
+    color: #334155;
+}
+QProgressBar::chunk {
+    background: #0ea5e9;
+    border-radius: 6px;
+}
+QProgressBar#recvProgress::chunk {
+    background: #16a34a;
 }
 QListWidget {
     background: #ffffff;

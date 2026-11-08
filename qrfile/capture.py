@@ -43,6 +43,95 @@ class CaptureOptions:
     backend: str = "auto"
 
 
+@dataclass(frozen=True, slots=True)
+class MonitorInfo:
+    """一块物理显示器。``index`` 从 1 开始，方便直接展示给用户。"""
+
+    index: int
+    left: int
+    top: int
+    width: int
+    height: int
+    is_primary: bool = False
+
+    @property
+    def region(self) -> Region:
+        return (self.left, self.top, self.left + self.width, self.top + self.height)
+
+    def describe(self) -> str:
+        suffix = " · 主屏" if self.is_primary else ""
+        return (
+            f"屏幕 {self.index} · {self.width}×{self.height} "
+            f"@ {self.left},{self.top}{suffix}"
+        )
+
+
+def list_monitors() -> list[MonitorInfo]:
+    """枚举物理显示器（mss 的物理像素坐标，从 1 开始编号）。
+
+    主屏 / 副屏的坐标可能为负数或很大，这是正常的虚拟桌面坐标。
+    """
+    try:
+        import mss
+    except ImportError as exc:  # pragma: no cover - 核心依赖一般都在
+        raise InputError(f"无法枚举显示器（缺少 mss）：{exc}") from exc
+
+    try:
+        with mss.MSS() as session:
+            raw = session.monitors
+    except Exception as exc:
+        raise InputError(f"无法枚举显示器：{exc}") from exc
+
+    monitors: list[MonitorInfo] = []
+    # raw[0] 是"所有显示器拼起来的虚拟屏"，raw[1:] 才是物理显示器。
+    for index, item in enumerate(raw[1:], 1):
+        monitors.append(
+            MonitorInfo(
+                index=index,
+                left=int(item["left"]),
+                top=int(item["top"]),
+                width=int(item["width"]),
+                height=int(item["height"]),
+                is_primary=bool(item.get("is_primary", False)),
+            )
+        )
+    return monitors
+
+
+def detect_play_screen_size() -> tuple[int, int] | None:
+    """选一个**单块显示器**的尺寸给播放器用。
+
+    不能直接用 Tk 的 ``winfo_screenwidth``：在 WSLg / 多屏下它返回的是
+    虚拟桌面总尺寸（例如 3840×1440），而全屏播放器实际只会落在一块屏幕上
+    （例如 2560×1440）。按虚拟桌面选布局会把右侧列排到窗口外，造成每屏
+    固定缺几列、永远补不齐。
+
+    优先主屏；没有主屏标记时选面积最大的显示器。
+    """
+    try:
+        monitors = list_monitors()
+    except InputError:
+        return None
+    if not monitors:
+        return None
+    primary = next((item for item in monitors if item.is_primary), None)
+    chosen = primary or max(monitors, key=lambda item: item.width * item.height)
+    return chosen.width, chosen.height
+
+
+def monitor_region(index: int) -> tuple[Region, MonitorInfo]:
+    """``--screen N`` → 该显示器的物理区域。"""
+    if index < 1:
+        raise InputError("--screen 从 1 开始编号（1 = 第一块显示器）")
+    monitors = list_monitors()
+    if index > len(monitors):
+        raise InputError(
+            f"没有第 {index} 块显示器；当前检测到 {len(monitors)} 块"
+        )
+    monitor = monitors[index - 1]
+    return monitor.region, monitor
+
+
 # --------------------------------------------------------------------------
 # 区域解析
 # --------------------------------------------------------------------------
@@ -358,20 +447,28 @@ def guess_remote_window() -> tuple[Region, str] | None:
 
 
 def resolve_region(
-    *, region: str | None = None, window: str | None = None
+    *,
+    region: str | None = None,
+    window: str | None = None,
+    screen: int | None = None,
 ) -> tuple[Region | None, str]:
     """把命令行参数变成实际的采集区域。
 
     返回 ``(region, 说明文字)``。``region=None`` 表示整个虚拟屏。
+    ``--region`` / ``--window`` / ``--screen`` 三选一。
     """
-    if region and window:
-        raise InputError("--region 和 --window 只能二选一")
+    selected = [bool(region), bool(window), screen is not None]
+    if sum(selected) > 1:
+        raise InputError("--region、--window、--screen 只能三选一")
     if region:
         return parse_region(region), f"区域 {region}"
     if window:
         rect, actual = resolve_window(window)
         left, top, right, bottom = rect
         return rect, f"窗口 {actual!r}（{right - left}×{bottom - top} @ {left},{top}）"
+    if screen is not None:
+        rect, monitor = monitor_region(int(screen))
+        return rect, monitor.describe()
     return None, "整个屏幕"
 
 

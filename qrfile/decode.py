@@ -26,6 +26,7 @@ import io
 import os
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Callable
 
 import zxingcpp
 from PIL import Image
@@ -221,7 +222,12 @@ def _try_junction(target: str, link_path: str) -> str | None:
     return None
 
 
-def restore_session(session, options: RestoreOptions) -> RestoreReport:
+def restore_session(
+    session,
+    options: RestoreOptions,
+    *,
+    progress: Callable[[int, int, str], None] | None = None,
+) -> RestoreReport:
     """把还原出来的会话写成一个文件树。
 
     安全防线（方案 0.3）全在这一层：
@@ -294,7 +300,8 @@ def restore_session(session, options: RestoreOptions) -> RestoreReport:
             skipped.append((display_path(rel), "目录建不出来（名字在目标系统上非法？）"))
 
     # ---- 文件
-    for entry in session.manifest.files:
+    total_files = len(session.manifest.files)
+    for index, entry in enumerate(session.manifest.files, 1):
         rel = entry.resolve_path()
         data = session.file_bytes(entry)
         done = False
@@ -345,6 +352,9 @@ def restore_session(session, options: RestoreOptions) -> RestoreReport:
 
         if not done and not any(p == display_path(rel) for p, _ in skipped):
             skipped.append((display_path(rel), "写不进去（名字在目标系统上非法？）"))
+
+        if progress is not None:
+            progress(index, total_files, display_path(rel))
 
     # ---- 符号链接
     for entry in session.manifest.symlinks:

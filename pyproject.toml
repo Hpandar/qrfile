@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "qrfile"
-version = "0.7.1"
+version = "0.7.5"
 description = "文本文件 ⇄ 二维码 双向转码工具：字节级一致、源文件只读、每步自验证"
 readme = "README.md"
 requires-python = ">=3.11"
@@ -30,7 +30,11 @@ dependencies = [
 [project.optional-dependencies]
 dev = ["pytest>=8", "hypothesis>=6"]
 #: 图形界面。PySide6 6.9 是 manylinux_2_28，RHEL 8 可用；6.10+ 需要更新的 glibc。
-gui = ["PySide6-Essentials>=6.9,<6.10"]
+gui = [
+    "PySide6-Essentials>=6.9,<6.10",
+    #: Windows 自动定位 VNC / 远程桌面窗口（接收区域自动识别）
+    "pygetwindow>=0.0.9; sys_platform == 'win32'",
+]
 #: 按窗口标题定位采集区域（qrfile recv --window）
 window = ["pygetwindow>=0.0.9"]
 #: 从现成视频文件抽帧（qrfile decode-video）

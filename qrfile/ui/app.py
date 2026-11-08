@@ -6,8 +6,8 @@ import os
 import sys
 from pathlib import Path
 
-from PySide6.QtCore import QSettings, Qt
-from PySide6.QtGui import QGuiApplication
+from PySide6.QtCore import QPoint, QRect, QSettings, QTimer, Qt
+from PySide6.QtGui import QGuiApplication, QKeySequence, QScreen, QShortcut
 from PySide6.QtWidgets import (
     QApplication,
     QButtonGroup,
@@ -22,7 +22,9 @@ from PySide6.QtWidgets import (
 )
 
 from .. import __version__
+from ..capture import guess_remote_window, list_monitors
 from ..errors import InputError
+from .overlay import CaptureOverlay
 from .pages import (
     DiagnosticsPage,
     HomePage,
@@ -49,6 +51,12 @@ class MainWindow(QMainWindow):
         self.settings = QSettings("qrfile", "qrfile")
         self.job = None
         self.active_kind: str | None = None
+        self.overlay = CaptureOverlay()
+        self._receive_timer: QTimer | None = None
+        self._pending_receive: dict | None = None
+        self._receive_screen_index: int | None = None
+        self._receive_countdown = 0
+        self._last_send_params: dict | None = None
 
         self.setWindowTitle("qrfile · 二维码文件传输")
         self.resize(1120, 780)
@@ -65,6 +73,14 @@ class MainWindow(QMainWindow):
         self._build_ui()
         self._connect()
         self._navigate("home")
+        self._maximize_shortcut = QShortcut(QKeySequence("F11"), self)
+        self._maximize_shortcut.activated.connect(self._toggle_maximize)
+
+    def _toggle_maximize(self) -> None:
+        if self.isMaximized():
+            self.showNormal()
+        else:
+            self.showMaximized()
 
     # ---------------------------------------------------------------- 布局
 
@@ -94,6 +110,17 @@ class MainWindow(QMainWindow):
         brand_row.addWidget(mark)
         brand_row.addWidget(brand)
         brand_row.addStretch(1)
+        maximize = QPushButton("□")
+        maximize.setFixedSize(26, 26)
+        maximize.setCursor(Qt.CursorShape.PointingHandCursor)
+        maximize.setToolTip("最大化 / 还原（F11）")
+        maximize.setStyleSheet(
+            "QPushButton{background:transparent;color:#9fb3c8;"
+            "border:1px solid #31465e;border-radius:6px;padding:0;}"
+            "QPushButton:hover{color:#ffffff;border-color:#64748b;}"
+        )
+        maximize.clicked.connect(self._toggle_maximize)
+        brand_row.addWidget(maximize)
         side.addLayout(brand_row)
         side.addSpacing(18)
 
@@ -105,6 +132,8 @@ class MainWindow(QMainWindow):
             nav.setObjectName("nav")
             nav.setCheckable(True)
             nav.setCursor(Qt.CursorShape.PointingHandCursor)
+            if key in ("send", "recv"):
+                nav.setProperty("role", key)
             nav.clicked.connect(lambda _checked=False, k=key: self._navigate(k))
             self.nav_group.addButton(nav)
             self.nav_buttons[key] = nav
@@ -158,6 +187,8 @@ class MainWindow(QMainWindow):
 
         self.send_monitor.command.connect(self._command)
         self.send_monitor.stop_requested.connect(self._stop)
+        self.send_monitor.resume_requested.connect(self._resume_send)
+        self.send_monitor.interval_requested.connect(self._apply_interval_command)
         self.receive_monitor.stop_requested.connect(self._stop)
 
         self.diagnostics.run_requested.connect(self._run_diagnostics)
@@ -223,6 +254,7 @@ class MainWindow(QMainWindow):
 
         self.send_monitor.reset()
         self._navigate("send_monitor")
+        self._last_send_params = dict(params)
         self._start_job(args, cwd=Path.home(), kind="send", events_mode=True)
 
         path = str(params["path"])
@@ -232,21 +264,124 @@ class MainWindow(QMainWindow):
         self.settings_page.load()
         self.send_monitor.events.append_line(f"[界面] 发送：{path}")
 
+    def _apply_interval_command(self, text: str) -> None:
+        """应用播放区间：正在播放时直接切页并恢复播放；已退出则续播同一会话。"""
+        text = text.strip()
+        if (
+            self.job is not None
+            and self.job.running
+            and self.active_kind == "send"
+        ):
+            if text:
+                self.job.send_command(f"interval {text}")
+            self.job.send_command("resume")
+            self.send_monitor.events.append_line(
+                "[界面] 已应用播放区间并恢复播放"
+            )
+            return
+        self._resume_send(interval_text=text)
+
+    def _resume_send(self, interval_text: str = "") -> None:
+        """按同一会话继续播放（Esc / 停止之后仍然可用）。"""
+        if self.job is not None and self.job.running:
+            if self.active_kind == "send":
+                if interval_text:
+                    self.job.send_command(f"interval {interval_text}")
+                self.job.send_command("resume")
+            return
+
+        params = self._last_send_params
+        if not params:
+            QMessageBox.information(
+                self, "没有可继续的播放", "请先到发送页开始一次播放。"
+            )
+            return
+
+        total = self.send_monitor.total_frames
+        if not interval_text:
+            if total <= 0:
+                QMessageBox.information(
+                    self,
+                    "没有会话信息",
+                    "无法确定会话分片数，请回到发送页重新开始。",
+                )
+                return
+            interval_text = f"0-{total - 1}"
+
+        args = [
+            "push",
+            "--repair",
+            interval_text,
+            "--events-json",
+            "--duration",
+            str(params.get("duration", 1800)),
+        ]
+        self.send_monitor.reset()
+        self._navigate("send_monitor")
+        self._start_job(args, cwd=Path.home(), kind="send", events_mode=True)
+        self.send_monitor.events.append_line(
+            f"[界面] 继续播放（同一会话）：{interval_text}"
+        )
+
     def _start_receive(self, params: dict) -> None:
         if self.job is not None and self.job.running:
             QMessageBox.information(self, "请稍等", "已有任务在运行，先停止当前任务。")
             return
+        if self._receive_timer is not None and self._receive_timer.isActive():
+            QMessageBox.information(self, "请稍等", "接收倒计时进行中。")
+            return
 
-        args = ["pull", str(params["output"]), "--events-json"]
-        if params.get("safe"):
-            args.append("--safe")
-        if params.get("window"):
-            args += ["--window", str(params["window"])]
-        if params.get("region"):
-            args += ["--region", str(params["region"])]
+        target, label, screen_index = self._receive_overlay_target(params)
+        self._receive_screen_index = screen_index
+        self._pending_receive = dict(params)
+        self._receive_countdown = 3
 
         self.receive_monitor.reset()
         self._navigate("recv_monitor")
+        self.receive_monitor.set_countdown(3)
+        self.receive_monitor.events.append_line(f"[界面] 接收区域：{label}")
+        self.receive_monitor.events.append_line("[界面] 3 秒后开始接收…")
+
+        self.overlay.show_target(target, label, countdown=3)
+        self._receive_timer = QTimer(self)
+        self._receive_timer.setInterval(1000)
+        self._receive_timer.timeout.connect(self._tick_receive_countdown)
+        self._receive_timer.start()
+
+    def _tick_receive_countdown(self) -> None:
+        self._receive_countdown -= 1
+        if self._receive_countdown > 0:
+            self.overlay.set_countdown(self._receive_countdown)
+            self.receive_monitor.set_countdown(self._receive_countdown)
+            self.receive_monitor.events.append_line(
+                f"[界面] {self._receive_countdown}…"
+            )
+            return
+
+        if self._receive_timer is not None:
+            self._receive_timer.stop()
+            self._receive_timer = None
+        self.overlay.set_border_only()
+        self.receive_monitor.set_countdown(0)
+
+        params = self._pending_receive
+        self._pending_receive = None
+        if params is not None:
+            self._launch_receive(params)
+
+    def _launch_receive(self, params: dict) -> None:
+        args = ["pull", str(params["output"]), "--events-json"]
+        if params.get("safe"):
+            args.append("--safe")
+
+        screen = params.get("screen")
+        if screen is not None:
+            args += ["--screen", str(screen)]
+        elif params.get("window"):
+            args += ["--window", str(params["window"])]
+        elif params.get("region"):
+            args += ["--region", str(params["region"])]
+
         self._start_job(
             args,
             cwd=Path(params["output"]),
@@ -254,9 +389,84 @@ class MainWindow(QMainWindow):
             events_mode=True,
         )
         self._remember("recent/receive", str(params["output"]))
-        self.receive_monitor.events.append_line(
-            f"[界面] 接收：{params['output']}"
-        )
+        self.receive_monitor.events.append_line("[界面] 倒计时结束，开始接收")
+
+    def _receive_overlay_target(
+        self, params: dict
+    ) -> tuple[QRect, str, int | None]:
+        """确定倒计时/边框显示在哪个区域。"""
+        screen_index = params.get("screen")
+        if screen_index is not None:
+            try:
+                monitor = next(
+                    item
+                    for item in list_monitors()
+                    if item.index == int(screen_index)
+                )
+                screen = self._qt_screen_for_monitor(monitor)
+                if screen is not None:
+                    return (
+                        QRect(screen.geometry()),
+                        f"接收区域 · {monitor.describe()}",
+                        int(screen_index),
+                    )
+            except (InputError, StopIteration):
+                pass
+
+        try:
+            guessed = guess_remote_window()
+        except Exception:
+            guessed = None
+        if guessed is not None:
+            rect, title = guessed
+            return (
+                self._physical_to_logical(rect),
+                f"自动识别 · {title}",
+                None,
+            )
+
+        primary = QGuiApplication.primaryScreen()
+        if primary is not None:
+            return QRect(primary.geometry()), "接收区域 · 自动（整屏）", None
+        return QRect(0, 0, 1, 1), "接收区域 · 自动", None
+
+    def _qt_screen_for_monitor(self, monitor) -> QScreen | None:
+        screens = QGuiApplication.screens()
+        for screen in screens:
+            dpr = screen.devicePixelRatio() or 1.0
+            if (
+                abs(round(screen.geometry().width() * dpr) - monitor.width) <= 2
+                and abs(
+                    round(screen.geometry().height() * dpr) - monitor.height
+                )
+                <= 2
+            ):
+                return screen
+        if 0 <= monitor.index - 1 < len(screens):
+            return screens[monitor.index - 1]
+        return QGuiApplication.primaryScreen()
+
+    def _physical_to_logical(self, rect: tuple[int, int, int, int]) -> QRect:
+        """把 mss 的物理像素区域换算成 Qt 的逻辑坐标。"""
+        x1, y1, x2, y2 = rect
+        center = QPoint((x1 + x2) // 2, (y1 + y2) // 2)
+        for screen in QGuiApplication.screens():
+            dpr = screen.devicePixelRatio() or 1.0
+            geo = screen.geometry()
+            physical = QRect(
+                round(geo.x() * dpr),
+                round(geo.y() * dpr),
+                round(geo.width() * dpr),
+                round(geo.height() * dpr),
+            )
+            if physical.contains(center):
+                return QRect(
+                    round((x1 - physical.x()) / dpr + geo.x()),
+                    round((y1 - physical.y()) / dpr + geo.y()),
+                    max(1, round((x2 - x1) / dpr)),
+                    max(1, round((y2 - y1) / dpr)),
+                )
+        return QRect(x1, y1, max(1, x2 - x1), max(1, y2 - y1))
 
     def _run_diagnostics(self, which: str) -> None:
         if self.job is not None and self.job.running:
@@ -319,10 +529,17 @@ class MainWindow(QMainWindow):
             target = self.receive_monitor
             if kind == "window":
                 target.set_window(event)
+                if self._receive_screen_index is None and event.get("rect"):
+                    self.overlay.update_target(
+                        self._physical_to_logical(tuple(event["rect"])),
+                        f"接收区域 · {event.get('description', '自动')}",
+                    )
             elif kind == "progress":
                 target.set_progress(event)
             elif kind == "missing":
                 target.set_missing(event)
+            elif kind == "restore_progress":
+                target.set_restore_progress(event)
             elif kind == "state":
                 target.set_state(event)
             elif kind == "error":
@@ -346,6 +563,8 @@ class MainWindow(QMainWindow):
             self.diagnostics.append(line)
 
     def _on_finished(self, code: int) -> None:
+        self._cancel_receive_countdown()
+        self.overlay.clear()
         kind = self.active_kind
         if kind == "send":
             self.send_monitor.finish(code)
@@ -359,6 +578,8 @@ class MainWindow(QMainWindow):
 
     def _on_failed(self, message: str) -> None:
         QMessageBox.critical(self, "启动失败", message)
+        self._cancel_receive_countdown()
+        self.overlay.clear()
         self.job = None
         self.active_kind = None
 
@@ -369,13 +590,26 @@ class MainWindow(QMainWindow):
             self.job.send_command(command)
 
     def _stop(self) -> None:
+        if self._receive_timer is not None and self._receive_timer.isActive():
+            self._cancel_receive_countdown()
+            self.overlay.clear()
+            self.receive_monitor.set_countdown(0)
+            self.receive_monitor.events.append_line("[界面] 已取消接收")
+            return
         if self.job is None:
             return
         self.job.stop()
+        self.overlay.clear()
         if self.active_kind == "send":
             self.send_monitor.events.append_line("[界面] 正在停止播放…")
         elif self.active_kind == "recv":
             self.receive_monitor.events.append_line("[界面] 正在停止接收…")
+
+    def _cancel_receive_countdown(self) -> None:
+        if self._receive_timer is not None:
+            self._receive_timer.stop()
+            self._receive_timer = None
+        self._pending_receive = None
 
     def _remember(self, key: str, path: str) -> None:
         raw = self.settings.value(key, [])
@@ -410,6 +644,8 @@ class MainWindow(QMainWindow):
                 event.ignore()
                 return
             self.job.stop()
+        self._cancel_receive_countdown()
+        self.overlay.clear()
         event.accept()
 
 

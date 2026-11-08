@@ -128,6 +128,73 @@ def test_receive_monitor_event_routing(app) -> None:
         window.close()
 
 
+def test_pull_accepts_screen_option(monkeypatch) -> None:
+    from click.testing import CliRunner
+
+    from qrfile import live_cli
+
+    captured: dict = {}
+    monkeypatch.setattr(
+        live_cli,
+        "_pull_impl",
+        lambda output, **kwargs: captured.update(kwargs, output=output),
+    )
+    result = CliRunner().invoke(live_cli.pull_cmd, ["out", "--screen", "2"])
+
+    assert result.exit_code == 0, result.output
+    assert captured["screen"] == 2
+
+
+def test_receive_page_has_screen_selector(app) -> None:
+    from PySide6.QtCore import QSettings
+
+    from qrfile.ui.pages import ReceivePage
+
+    page = ReceivePage(QSettings("qrfile", "qrfile"))
+    try:
+        assert page.screen.count() >= 1
+        assert page.screen.itemData(0) is None
+    finally:
+        page.close()
+
+
+def test_send_monitor_shows_resume_after_finish(app) -> None:
+    from qrfile.ui.pages import SendMonitorPage
+
+    page = SendMonitorPage()
+    try:
+        page.finish(0)
+        assert not page.resume_button.isHidden()
+        assert str(page.header.chip.text()) == "播放结束"
+    finally:
+        page.close()
+
+
+def test_receive_monitor_restore_progress_and_output(app) -> None:
+    from qrfile.ui.pages import ReceiveMonitorPage
+
+    page = ReceiveMonitorPage()
+    try:
+        page.set_restore_progress(
+            {"written": 5, "total": 10, "path": "tests/a.py"}
+        )
+        assert page.restore_bar.value() == 5
+
+        page.set_state(
+            {
+                "state": "completed",
+                "output": r"C:\Users\10911\Desktop\out",
+                "content_path": r"C:\Users\10911\Desktop\out\tests",
+                "top_level": ["tests"],
+                "written": 10,
+            }
+        )
+        assert "C:\\Users\\10911\\Desktop\\out\\tests" in page.done_label.text()
+        assert not page.open_button.isHidden()
+    finally:
+        page.close()
+
+
 def test_interval_dialog_preview(app) -> None:
     dialog = IntervalDialog(total=100, per_screen=8, text="0-9")
     try:

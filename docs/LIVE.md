@@ -75,10 +75,14 @@ UI 只消费 CLI 输出的 NDJSON 事件，不解析人类日志。
 # A：手动指定布局 / 帧率 / 压缩
 qrfile send D:\data --mode auto --fps 6 --compression auto
 
-# B：手动指定采集窗口或区域
+# B：手动指定采集窗口、区域或显示器
 qrfile recv D:\out --window "远程桌面连接"
 qrfile recv D:\out --region 100,80,1280,720
+qrfile recv D:\out --screen 2              # 多屏：接收第 2 块显示器
 ```
+
+GUI 的接收页可以直接选择“自动 / 屏幕 1 / 屏幕 2…”，开始前有 3 秒倒计时，
+并在目标区域显示绿色边框，便于确认实际接收的是哪块屏幕。
 
 `recv` 会在收齐所有分片后**自动停止**，然后逐文件校验、还原目录结构。
 中途按 Ctrl+C 放弃；下次再跑一次即可，已收到的分片会重新收到，不影响结果。

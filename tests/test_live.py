@@ -351,6 +351,54 @@ def test_parse_region() -> None:
         parse_region("1,2,0,4")
 
 
+def test_detect_play_screen_size(monkeypatch) -> None:
+    from qrfile import capture
+
+    monitors = [
+        capture.MonitorInfo(1, 0, 0, 1280, 800, False),
+        capture.MonitorInfo(2, 1280, 0, 2560, 1440, False),
+    ]
+    monkeypatch.setattr(capture, "list_monitors", lambda: monitors)
+    # WSLg 两块都没有主屏标记：选面积最大的，避免按虚拟桌面 3840 排布局
+    assert capture.detect_play_screen_size() == (2560, 1440)
+
+    monitors[1] = capture.MonitorInfo(2, 1280, 0, 2560, 1440, True)
+    monkeypatch.setattr(capture, "list_monitors", lambda: monitors)
+    assert capture.detect_play_screen_size() == (2560, 1440)
+
+
+def test_restore_content_path() -> None:
+    from pathlib import Path as P
+    from types import SimpleNamespace
+
+    from qrfile.live_cli import _restore_content_path
+
+    report = SimpleNamespace(written=("tests/a.py", "tests/b.py"))
+    assert _restore_content_path(report, P("/out"))[0] == P("/out/tests")
+
+    report = SimpleNamespace(written=("a.txt", "b.txt"))
+    assert _restore_content_path(report, P("/out"))[0] == P("/out")
+
+    report = SimpleNamespace(written=("a.txt",))
+    assert _restore_content_path(report, P("/out"))[0] == P("/out/a.txt")
+
+
+def test_resolve_screen_region(monkeypatch) -> None:
+    from qrfile import capture
+
+    fake = capture.MonitorInfo(index=1, left=-1920, top=0, width=1920, height=1080)
+    monkeypatch.setattr(capture, "list_monitors", lambda: [fake])
+
+    rect, description = capture.resolve_region(screen=1)
+    assert rect == (-1920, 0, 0, 1080)
+    assert "屏幕 1" in description
+
+    with pytest.raises(InputError):
+        capture.resolve_region(screen=2)
+    with pytest.raises(InputError):
+        capture.resolve_region(region="0,0,100,100", screen=1)
+
+
 # --------------------------------------------------------------------------
 # 跨平台：Linux 窗口解析
 # --------------------------------------------------------------------------

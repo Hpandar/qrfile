@@ -96,12 +96,17 @@ class PageHeader(QWidget):
 class ProgressRing(QWidget):
     """圆环进度，中间显示百分比。"""
 
-    def __init__(self, parent=None) -> None:
+    def __init__(self, parent=None, *, color: str = COLORS["accent"]) -> None:
         super().__init__(parent)
         self._value = 0
+        self._color = QColor(color)
         self.setMinimumSize(132, 132)
         self.setMaximumSize(170, 170)
         self.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Fixed)
+
+    def set_color(self, color: str) -> None:
+        self._color = QColor(color)
+        self.update()
 
     def set_value(self, value: float) -> None:
         value = max(0, min(100, int(round(value))))
@@ -133,7 +138,7 @@ class ProgressRing(QWidget):
         painter.drawArc(rect, 0, 360 * 16)
 
         if self._value > 0:
-            pen = QPen(QColor(COLORS["accent"]), 10)
+            pen = QPen(self._color, 10)
             pen.setCapStyle(Qt.PenCapStyle.RoundCap)
             painter.setPen(pen)
             painter.drawArc(rect, 90 * 16, -int(360 * 16 * self._value / 100))
@@ -156,17 +161,22 @@ class ChunkMap(QWidget):
     MAX_CELLS = 240
     GAP = 3
 
-    def __init__(self, parent=None) -> None:
+    def __init__(self, parent=None, *, received_color: str = "#34d399") -> None:
         super().__init__(parent)
         self._total = 0
         self._received: set[int] = set()
         self._missing: set[int] = set()
+        self._received_color = QColor(received_color)
         self._columns = 24
         self._cell_rects: list[tuple[QRectF, int, int, bool]] = []
         self.setMouseTracking(True)
         self.setMinimumHeight(120)
         self.setMaximumHeight(260)
         self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
+
+    def set_received_color(self, color: str) -> None:
+        self._received_color = QColor(color)
+        self.update()
 
     def set_data(
         self,
@@ -237,7 +247,7 @@ class ChunkMap(QWidget):
         x0 = (self.width() - total_w) / 2
         y0 = (self.height() - total_h) / 2
 
-        green = QColor("#34d399")
+        green = self._received_color
         amber = QColor("#fbbf24")
         idle = QColor("#e2e8f0")
 

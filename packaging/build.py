@@ -57,7 +57,7 @@ EXCLUDES = [
     "PySide2",
 ]
 
-COMMON_HIDDEN_IMPORTS: list[str] = []
+COMMON_HIDDEN_IMPORTS: list[str] = ["mss"]
 
 
 def _tcl_tk_binaries() -> list[tuple[Path, str]]:
@@ -168,6 +168,10 @@ def build(
         "--specpath",
         str(ROOT / "packaging"),
     ]
+
+    if sys.platform == "win32":
+        # 自动定位 VNC / 远程桌面窗口
+        command += ["--hidden-import", "pygetwindow"]
 
     if not gui:
         command += [

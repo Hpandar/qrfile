@@ -178,6 +178,18 @@ def _run(action) -> None:
 
 def _screen_size(text: str) -> tuple[int, int]:
     if text.strip().lower() == "auto":
+        # 优先按"单块显示器"选布局。Tk 的 winfo_screenwidth 在多屏 / WSLg
+        # 下是虚拟桌面总尺寸，全屏播放器实际只落在一块屏幕上，按总尺寸
+        # 排布会把最右侧列排到窗口外，造成永远缺几十片。
+        try:
+            from .capture import detect_play_screen_size
+
+            found = detect_play_screen_size()
+        except Exception:  # pragma: no cover - 环境相关
+            found = None
+        if found:
+            return found
+
         try:
             from .cli import detect_screen_size
         except Exception:  # pragma: no cover
@@ -700,12 +712,34 @@ def _decode_symbols(image, *, robust: bool):
     return decode_image(image, source="屏幕")
 
 
-def _restore(collector: LiveCollector, output: str, *, overwrite: bool, restore_times: bool):
+def _restore_content_path(report, output: Path) -> tuple[Path, list[str]]:
+    """实际还原出来的顶层目录/文件。
+
+    例如 ``push /data`` → 输出目录 ``out/data``；只传一个文件时 → ``out/a.txt``。
+    顶层有多个条目时才退回输出根目录。
+    """
+    tops = sorted(
+        {Path(item).parts[0] for item in report.written if Path(item).parts}
+    )
+    if len(tops) == 1:
+        return output / tops[0], tops
+    return output, tops
+
+
+def _restore(
+    collector: LiveCollector,
+    output: str,
+    *,
+    overwrite: bool,
+    restore_times: bool,
+    progress=None,
+):
     session, stats = collector.finalize()
     _ok(
         f"收齐 {stats.accepted} 片（重复 {stats.duplicates}、坏帧 {stats.damaged}、"
         f"外来码 {stats.foreign}）"
     )
+    events.emit("state", state="restoring")
     report = restore_session(
         session,
         RestoreOptions(
@@ -713,12 +747,16 @@ def _restore(collector: LiveCollector, output: str, *, overwrite: bool, restore_
             overwrite=overwrite,
             restore_times=restore_times,
         ),
+        progress=progress,
     )
     for path, reason in report.skipped:
         _warn(f"跳过 {path} — {reason}")
     for original, renamed in report.renamed:
         _warn(f"名字被转义：{original} -> {renamed}")
-    _ok(f"还原 {report.written_count} 个文件到 {Path(output).resolve()}")
+    content_path, tops = _restore_content_path(report, Path(output).resolve())
+    _ok(f"还原 {report.written_count} 个文件到 {content_path}")
+    if len(tops) > 1:
+        _echo(f"顶层条目：{', '.join(tops)}")
     if not report.is_byte_identical:
         _warn("有文件名被改动（内容仍然逐字节校验通过）")
     return report
@@ -891,6 +929,15 @@ def _receive_loop(
         sys.exit(EXIT_VERIFY_FAILED)
 
     progress_before = collector.progress()
+
+    def on_restore_progress(done: int, total: int, path: str) -> None:
+        events.emit(
+            "restore_progress",
+            written=done,
+            total=total,
+            path=path,
+        )
+
     events.emit("state", state="verifying")
     try:
         report = _restore(
@@ -898,6 +945,7 @@ def _receive_loop(
             output,
             overwrite=overwrite,
             restore_times=not no_restore_times,
+            progress=on_restore_progress,
         )
     except QrFileError as exc:
         events.emit_error(
@@ -906,6 +954,7 @@ def _receive_loop(
             hint="校验未通过，未写入任何文件。请检查源文件是否变化。",
         )
         raise
+    content_path, tops = _restore_content_path(report, Path(output).resolve())
     events.emit(
         "state",
         state="completed",
@@ -913,6 +962,8 @@ def _receive_loop(
         total=progress_before.total,
         written=report.written_count,
         output=str(Path(output).resolve()),
+        content_path=str(content_path),
+        top_level=tops,
         byte_identical=report.is_byte_identical,
     )
 
@@ -931,10 +982,11 @@ def _recv_impl(
     capture: str = "auto",
     keep_awake: bool = True,
     events_json: bool = False,
+    screen: int | None = None,
 ) -> None:
     if events_json:
         events.enable_events()
-    rect, description = resolve_region(region=region, window=window)
+    rect, description = resolve_region(region=region, window=window, screen=screen)
     events.emit("window", rect=rect, description=description)
     _receive_loop(
         output,
@@ -961,11 +1013,12 @@ def _pull_impl(
     capture: str = "auto",
     keep_awake: bool = True,
     events_json: bool = False,
+    screen: int | None = None,
 ) -> None:
     if events_json:
         events.enable_events()
-    if window or region:
-        rect, description = resolve_region(region=region, window=window)
+    if window or region or screen is not None:
+        rect, description = resolve_region(region=region, window=window, screen=screen)
         events.emit("window", rect=rect, description=description)
         if window and activate_window(window):
             _echo("已把目标窗口调到前台")
@@ -1109,6 +1162,8 @@ def push_cmd(
 @click.option("--safe", is_flag=True, help="更稳：多策略解码（画面被缩放时用）")
 @click.option("--window", default=None, help="手动指定窗口标题（通常不需要）")
 @click.option("--region", default=None, help="手动指定区域 x,y,w,h（通常不需要）")
+@click.option("--screen", type=int, default=None,
+              help="指定接收的显示器编号（1=第一块；多屏时用）")
 @click.option("--capture", type=click.Choice(["auto", "dxcam", "mss", "imagegrab"]),
               default="auto", hidden=True, help="采集后端（诊断用）")
 @click.option("--keep-awake/--no-keep-awake", default=True, hidden=True)
@@ -1119,6 +1174,7 @@ def pull_cmd(
     safe: bool,
     window: str | None,
     region: str | None,
+    screen: int | None,
     capture: str,
     keep_awake: bool,
     events_json: bool,
@@ -1130,6 +1186,7 @@ def pull_cmd(
             safe=safe,
             window=window,
             region=region,
+            screen=screen,
             capture=capture,
             keep_awake=keep_awake,
             events_json=events_json,
@@ -1141,6 +1198,8 @@ def pull_cmd(
 @click.argument("output", type=click.Path(file_okay=False))
 @click.option("--region", default=None, help="采集区域 x,y,w,h；默认整屏")
 @click.option("--window", default=None, help="按窗口标题子串定位（例如远程桌面窗口）")
+@click.option("--screen", type=int, default=None,
+              help="指定接收的显示器编号（1=第一块；多屏时用）")
 @click.option("--fps", type=float, default=8.0, show_default=True, help="采集帧率")
 @click.option("--overwrite", is_flag=True, help="允许覆盖输出目录里已存在的文件")
 @click.option("--no-restore-times", is_flag=True, help="不恢复文件修改时间")

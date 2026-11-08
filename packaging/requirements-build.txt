@@ -13,3 +13,4 @@ reedsolo>=1.7
 pyinstaller>=6.20
 #: 图形界面（--gui / --all）。6.9 是 manylinux_2_28，RHEL 8 可用。
 PySide6-Essentials>=6.9,<6.10
+pygetwindow>=0.0.9; sys_platform == 'win32'
