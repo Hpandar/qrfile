@@ -22,3 +22,6 @@ venv/
 .qrfile-session.json
 qrfile-debug.png
 _dxcam_*.png
+
+# RHEL 8 独立构建产物
+dist-rhel8/
