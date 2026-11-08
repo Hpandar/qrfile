@@ -103,9 +103,16 @@ def _setup_output() -> None:
     在**导入时**就执行 —— 不能放在 main() 里，因为 ``qrfile --help`` 是 click
     在解析参数阶段就打印并退出的，根本走不到 main() 的函数体。
     """
+    # GUI 子进程会设置这个标记：它的 stdout/stderr 是管道，且按 UTF-8 解码。
+    # 普通 CLI 重定向保持原有编码（中文 Windows 下仍是 GBK），不改变用户预期。
+    force_utf8_pipe = os.environ.get("QRFILE_UTF8_PIPE") == "1"
+
     for stream in (sys.stdout, sys.stderr):
         try:
-            stream.reconfigure(errors="replace")
+            if force_utf8_pipe and not getattr(stream, "isatty", lambda: True)():
+                stream.reconfigure(encoding="utf-8", errors="replace")
+            else:
+                stream.reconfigure(errors="replace")
         except (AttributeError, ValueError, OSError):
             # 流被替换过（比如测试里捕获输出）或者不支持 reconfigure
             pass
@@ -244,12 +251,13 @@ def _common_scan_options(func):
 _CHEAT_SHEET = """\
 qrfile —— 日常只需要两条命令，每条只带一个路径：
 
-  A 机器（被隔离的那台）：   qrfile push  <文件或目录>
-  B 机器（你手边这台）：     qrfile pull  <输出目录>
+  发送机器（被隔离的那台）： qrfile push  <文件或目录>
+  接收机器（你手边这台）：   qrfile pull  <输出目录>
 
   · 默认一屏多码（fast）；远端画面被缩放：两边都加 --safe
-  · 用手机拍屏：      A 机器加 --camera
+  · 用手机拍屏：      发送机器加 --camera
   · 漏了几片：        在 A 播放器底部「播放区间」输入框填入缺片范围
+  · 图形界面：        qrfile gui（需要 pip install 'qrfile[gui]'）
 
   其他命令（一般不用记）：qrfile --help
 """
@@ -1367,6 +1375,28 @@ def info(qr, quiet) -> None:
 # --------------------------------------------------------------------------
 # 实时链路（屏幕播放 / 截图 / 录屏）—— 单独放在 live_cli，避免主文件继续膨胀
 # --------------------------------------------------------------------------
+
+
+@click.command("gui")
+def gui_cmd() -> None:
+    """打开图形界面：发送 / 接收 / 诊断。"""
+
+    def run_gui() -> None:
+        try:
+            from .ui.app import main as gui_main
+        except ImportError as exc:
+            raise InputError(
+                f"图形界面不可用（{exc}）。请安装 GUI 依赖："
+                f"pip install 'qrfile[gui]'"
+            ) from exc
+        code = gui_main()
+        if code:
+            raise SystemExit(code)
+
+    _run(run_gui)
+
+
+main.add_command(gui_cmd)
 
 
 def _register_live_commands() -> None:

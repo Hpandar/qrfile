@@ -10,7 +10,7 @@ qrfile verify ./mysrc ./qrout                      复核：源 ⇄ 码 双向�
 ```
 
 > **两台机器只能互相看屏幕？** 实时链路只用两条命令：
-> A 机器 `qrfile push <路径>`，B 机器 `qrfile pull <输出目录>`。
+> 发送机器 `qrfile push <路径>`，接收机器 `qrfile pull <输出目录>`。
 > 记得住这两条就够了，其余全自动。详见 [docs/LIVE.md](docs/LIVE.md)。
 
 ## 三个承诺

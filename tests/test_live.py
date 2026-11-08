@@ -252,7 +252,7 @@ def test_interval_pages_helper() -> None:
     assert indices == [12, 13, 14, 204]
     assert pages == [1, 25]
 
-    # 直接粘贴接收端打印的整行也能用
+    # 直接粘贴接收机器打印的整行也能用
     _indices, pages = interval_pages("缺 37 片：12-14,204", total_chunks=500, per_screen=8)
     assert pages == [1, 25]
 

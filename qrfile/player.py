@@ -15,12 +15,14 @@ import io
 import os
 import queue
 import random
+import sys
 import threading
 from typing import Sequence
 
 import segno
 from PIL import Image, ImageDraw, ImageFont
 
+from . import events
 from .chunk import HEADER_SIZE
 from .errors import ChunkError, InputError
 from .livelayout import Layout
@@ -287,6 +289,8 @@ class Player:
         shuffle: bool = False,
         status_note: str = "",
         interval_text: str = "",
+        events_json: bool = False,
+        command_queue: queue.Queue[str] | None = None,
     ):
         self.frames = frames
         self.layout = layout
@@ -298,6 +302,9 @@ class Player:
         self.shuffle = shuffle
         #: 启动时预填在「播放区间」输入框里的文本（命令行 --repair 用）
         self.interval_text = interval_text
+        #: 事件模式：stdout 只写 NDJSON；GUI 用 stdin 发送控制命令
+        self.events_json = events_json
+        self.command_queue = command_queue
         self.producer = _PageProducer(
             frames, layout, mask=mask, pages=pages, shuffle=shuffle
         )
@@ -307,12 +314,35 @@ class Player:
     def _interval_ms(self) -> int:
         return max(15, int(1000 / self.fps))
 
+    def apply_interval(self, text: str) -> tuple[list[int], list[int]]:
+        """应用播放区间；空文本表示恢复完整播放。
+
+        供播放器底栏和 GUI 的 stdin 控制通道共用，保证两条路径行为一致。
+        """
+        from .session import format_ranges, interval_pages
+
+        text = text.strip()
+        if not text:
+            self.producer.status_note = ""
+            self.producer.set_pages(None)
+            self.interval_text = ""
+            return [], []
+
+        indices, pages = interval_pages(text, len(self.frames), self.layout.per_screen)
+        self.producer.status_note = (
+            f"播放区间 {len(indices)} 片 / {len(pages)} 页："
+            f"{format_ranges(indices, limit=8)}"
+        )
+        self.producer.set_pages(pages)
+        self.interval_text = text
+        return indices, pages
+
     def run(self, *, duration: float = 0.0) -> None:  # pragma: no cover - 需要真实显示器
         import tkinter as tk
         import tkinter.font as tkfont
         from PIL import ImageTk
 
-        from .session import format_ranges, interval_pages
+        from .session import format_ranges
 
         if not self.frames:
             raise ChunkError("没有可播放的分片")
@@ -335,6 +365,7 @@ class Player:
             # 输入框是否持有焦点；为真时屏蔽全局快捷键
             "input_active": False,
             "page": 0,
+            "last_emitted_page": -1,
         }
 
         def apply_window_mode() -> None:
@@ -372,6 +403,13 @@ class Player:
         # 所以常驻也不会挡住任何码。
         total_chunks = len(self.frames)
         total_pages = self.layout.page_count(total_chunks)
+        events.emit(
+            "player_started",
+            total=total_chunks,
+            pages=total_pages,
+            fps=round(self.fps, 2),
+            per_screen=self.layout.per_screen,
+        )
         bar_height = max(36, self.layout.status_height or 40)
         font_size = max(10, min(15, bar_height // 3))
         ui_font = tkfont.nametofont("TkDefaultFont").copy()
@@ -412,6 +450,7 @@ class Player:
                     f"{root.winfo_width()}x{root.winfo_height()} · "
                     f"屏幕 {root.winfo_screenwidth()}x{root.winfo_screenheight()} · "
                     f"DISPLAY={os.environ.get('DISPLAY', '')}",
+                    file=sys.stderr if self.events_json else sys.stdout,
                     flush=True,
                 )
             except tk.TclError:
@@ -433,7 +472,9 @@ class Player:
 
         def tick() -> None:
             if self.producer.error is not None:
-                print(f"渲染失败：{self.producer.error}")
+                message = f"渲染失败：{self.producer.error}"
+                print(message, file=sys.stderr if self.events_json else sys.stdout)
+                events.emit_error("render_failed", message)
                 stop()
                 return
             if not state["paused"]:
@@ -444,6 +485,14 @@ class Player:
                     root.after(15, tick)
                     return
                 state["page"] = index
+                if index != state["last_emitted_page"]:
+                    state["last_emitted_page"] = index
+                    events.emit(
+                        "page",
+                        page=index,
+                        total_pages=total_pages,
+                        fps=round(self.fps, 2),
+                    )
                 photo = ImageTk.PhotoImage(image)
                 label.configure(image=photo)
                 label.image = photo
@@ -468,33 +517,90 @@ class Player:
 
         def apply_interval_input(event=None) -> str:
             text = entry.get().strip()
-            if not text:
-                # 留空 = 退出区间模式，恢复完整播放
-                self.producer.status_note = ""
-                self.producer.set_pages(None)
-                print("[播放区间] 已恢复完整播放", flush=True)
-            else:
-                try:
-                    # 这里按布局的 per_screen 自动映射成页：
-                    # 一屏一码时页号=分片号，一屏多码时自动合并到整页。
-                    indices, pages = interval_pages(
-                        text, total_chunks, self.layout.per_screen
-                    )
-                except InputError as exc:
-                    hint_label.configure(text=f"错误：{exc}", fg="#ff8080")
-                    return "break"
+            try:
+                indices, pages = self.apply_interval(text)
+            except InputError as exc:
+                hint_label.configure(text=f"错误：{exc}", fg="#ff8080")
+                return "break"
 
-                note = (
+            if text:
+                ranges = format_ranges(indices, limit=25)
+                message = (
                     f"播放区间 {len(indices)} 片 / {len(pages)} 页："
                     f"{format_ranges(indices, limit=8)}"
                 )
-                self.producer.status_note = note
-                self.producer.set_pages(pages)
-                print(f"[播放区间] {note}", flush=True)
+            else:
+                ranges = ""
+                message = "已恢复完整播放"
+            print(
+                f"[播放区间] {message}",
+                file=sys.stderr if self.events_json else sys.stdout,
+                flush=True,
+            )
+            events.emit(
+                "interval", indices=indices, pages=pages, ranges=ranges, text=text
+            )
             hint_label.configure(text="r/点击 编辑 · 回车应用 · 留空=全部", fg="#909090")
             leave_interval_input()
             refresh_status()
             return "break"
+
+        def handle_command(command: str) -> None:
+            """处理 GUI 通过 stdin 发来的控制命令。"""
+            command = command.strip()
+            if not command:
+                return
+            verb, _, payload = command.partition(" ")
+
+            if verb in ("stop", "quit", "exit"):
+                stop()
+            elif verb == "pause":
+                state["paused"] = True
+                self.producer.paused = True
+                events.emit("paused", value=True)
+            elif verb == "resume":
+                state["paused"] = False
+                self.producer.paused = False
+                events.emit("paused", value=False)
+            elif verb in ("toggle_pause", "toggle"):
+                toggle_pause()
+            elif verb == "speed_up":
+                faster()
+            elif verb == "speed_down":
+                slower()
+            elif verb == "interval":
+                text = payload.strip()
+                try:
+                    indices, pages = self.apply_interval(text)
+                except InputError as exc:
+                    events.emit("interval_error", message=str(exc), text=text)
+                    return
+                entry.delete(0, tk.END)
+                entry.insert(0, text)
+                events.emit(
+                    "interval",
+                    indices=indices,
+                    pages=pages,
+                    ranges=format_ranges(indices, limit=25) if text else "",
+                    text=text,
+                )
+                refresh_status()
+            else:
+                events.emit(
+                    "warning",
+                    code="unknown_command",
+                    message=f"未知控制命令：{command}",
+                )
+
+        def poll_commands() -> None:
+            if self.command_queue is not None:
+                while True:
+                    try:
+                        command = self.command_queue.get_nowait()
+                    except queue.Empty:
+                        break
+                    handle_command(command)
+            root.after(100, poll_commands)
 
         def on_interval_focus_in(event=None) -> None:
             state["input_active"] = True
@@ -528,6 +634,7 @@ class Player:
                 return "break"
             state["paused"] = not state["paused"]
             self.producer.paused = state["paused"]
+            events.emit("paused", value=state["paused"])
             return "break"
 
         def faster(event=None) -> str:
@@ -631,6 +738,7 @@ class Player:
         root.after(800, ensure_visible)
         root.after(1000, engage_keyboard_grab)
         root.after(1600, report_geometry)
+        root.after(100, poll_commands)
 
         if duration > 0:
             root.after(int(duration * 1000), stop)
@@ -641,3 +749,4 @@ class Player:
         finally:
             self.producer.stop_event.set()
             self.producer.join(timeout=2.0)
+            events.emit("player_stopped")

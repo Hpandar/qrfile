@@ -11,3 +11,5 @@ reportlab>=4
 charset-normalizer>=3.3
 reedsolo>=1.7
 pyinstaller>=6.20
+#: 图形界面（--gui / --all）。6.9 是 manylinux_2_28，RHEL 8 可用。
+PySide6-Essentials>=6.9,<6.10

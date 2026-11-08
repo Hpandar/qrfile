@@ -3,19 +3,23 @@
 设计目标是**一条命令完成一件事**：
 
 ``qrfile send  <路径...>``   全屏循环播放（编码端）
-``qrfile recv  <输出目录>``  自动采集 + 解码 + 还原（接收端，收齐自动停）
+``qrfile recv  <输出目录>``  自动采集 + 解码 + 还原（接收机器，收齐自动停）
 ``qrfile record <帧目录>``   只录屏，产出无损 PNG 帧序列
 ``qrfile decode-video <视频...> -o <目录>``  从已有视频里还原
 """
 
 from __future__ import annotations
 
+import json
+import queue
 import sys
+import threading
 import time
 from pathlib import Path
 
 import click
 
+from . import events
 from .archive import build_session, manifest_for_sources
 from .awake import KeepAwake
 from .capture import (
@@ -68,7 +72,8 @@ COMPRESSION_VALUES = ["auto", "max", "zlib", "lzma", "none", "brotli", "zstd", "
 
 
 def _echo(message: str = "") -> None:
-    click.echo(message)
+    # 事件模式下 stdout 只允许 NDJSON，人类可读文本全部走 stderr
+    click.echo(message, err=events.events_enabled())
 
 
 def _print_repair_hint(total_chunks: int) -> None:
@@ -81,7 +86,7 @@ def _print_repair_hint(total_chunks: int) -> None:
 
     _echo("")
     _echo("=" * 60)
-    _echo(f"本次共 {total_chunks} 片。如果接收端提示缺片：")
+    _echo(f"本次共 {total_chunks} 片。如果接收机器提示缺片：")
     _echo("  播放器还没退出时，在底部「播放区间」输入框里填缺片范围，回车生效。")
     _echo("  已经退出则执行区间播放命令：")
     _echo(f'    {invocation} push --repair "<缺片范围>"')
@@ -94,7 +99,7 @@ def _warn(message: str) -> None:
 
 
 def _ok(message: str) -> None:
-    click.echo(f"[OK] {message}")
+    click.echo(f"[OK] {message}", err=events.events_enabled())
 
 
 def _human_bytes(value: int) -> str:
@@ -113,6 +118,20 @@ def _human_seconds(seconds: float) -> str:
     if minutes < 60:
         return f"{minutes:.1f} 分钟"
     return f"{minutes / 60:.1f} 小时"
+
+
+def _read_stdin_commands(out: queue.Queue[str]) -> None:
+    """事件模式下的远程控制通道：GUI 通过子进程 stdin 发送命令。
+
+    支持 ``interval 12-14,204``、``pause``、``resume``、``stop``。
+    """
+    try:
+        for line in sys.stdin:
+            line = line.strip()
+            if line:
+                out.put(line)
+    except Exception:  # pragma: no cover - 管道关闭
+        return
 
 
 def _run(action) -> None:
@@ -136,13 +155,23 @@ def _run(action) -> None:
         action()
     except KeyboardInterrupt:
         click.echo("")
+        events.emit("state", state="cancelled")
         sys.exit(130)
     except QrFileError as exc:
+        hint = "请查看日志或诊断页。"
+        if "WSLg" in str(exc):
+            hint = "WSLg 无法抓屏；请改用 Windows 版接收端，或在真实 Linux 桌面运行。"
+        events.emit_error("command_failed", str(exc), hint=hint)
         click.echo(f"错误：{exc}", err=True)
         sys.exit(exc.exit_code)
     except click.ClickException:
         raise
     except Exception as exc:  # pragma: no cover - 兜底
+        events.emit_error(
+            "internal_error",
+            f"{type(exc).__name__}: {exc}",
+            hint="请导出诊断日志以便排查。",
+        )
         click.echo(f"内部错误：{type(exc).__name__}: {exc}", err=True)
         sys.exit(EXIT_INTERNAL)
 
@@ -202,6 +231,16 @@ def _looks_blank(image) -> bool:
 def _progress_line(progress, *, width: int = 28) -> None:
     if progress.total <= 0:
         return
+    if events.events_enabled():
+        events.emit(
+            "progress",
+            received=progress.received,
+            total=progress.total,
+            percent=round(progress.percent, 1),
+            duplicates=progress.duplicates,
+            damaged=progress.damaged,
+        )
+        return
     filled = int(width * progress.received / progress.total)
     bar = "#" * filled + "-" * (width - filled)
     sys.stdout.write(
@@ -228,6 +267,7 @@ def _send_repair(
     camera: bool,
     accurate_mask: bool,
     keep_awake: bool = True,
+    events_json: bool = False,
 ) -> None:
     """只播放指定的分片区间 —— 不再整轮重来。"""
     if not record.files:
@@ -270,8 +310,31 @@ def _send_repair(
         raise InputError("给定的分片范围映射不到任何页")
 
     mask = None if (camera or accurate_mask) else 3
+    events.emit(
+        "plan",
+        total=plan.total,
+        pages=record.layout.page_count(plan.total),
+        session=plan.session_hex,
+        layout={
+            "version": record.layout.version,
+            "ecc": record.layout.ecc,
+            "module_px": record.layout.module_px,
+            "columns": record.layout.columns,
+            "rows": record.layout.rows,
+            "per_screen": record.layout.per_screen,
+            "description": record.layout.describe(),
+        },
+        interval=True,
+    )
+    events.emit(
+        "interval",
+        indices=indices,
+        pages=pages,
+        ranges=format_ranges(indices),
+        text=ranges_text,
+    )
     _echo(f"播放区间：{format_ranges(indices)} → {len(pages)} 页（会话 {plan.session_hex}）")
-    _echo("接收端保持运行；结束后按 Esc 退出。")
+    _echo("接收机器保持运行；结束后按 Esc 退出。")
     _echo("播放中可在底部「播放区间」输入框修改（留空回车恢复完整播放）。")
     if duration > 0:
         _echo(f"自动退出：{duration / 60:.0f} 分钟后（--duration 0 可关闭）")
@@ -287,11 +350,22 @@ def _send_repair(
         _ok(f"已写出 {len(pages)} 页到 {target}")
         return
 
+    command_queue: queue.Queue[str] | None = None
+    if events_json:
+        command_queue = queue.Queue()
+        threading.Thread(
+            target=_read_stdin_commands,
+            args=(command_queue,),
+            daemon=True,
+            name="qrfile-stdin-commands",
+        ).start()
+
     awake = KeepAwake()
     if keep_awake:
         awake.start()
     if awake.backend:
         _echo(f"已阻止息屏（{awake.backend}）")
+    events.emit("state", state="playing")
     try:
         Player(
             plan.frames,
@@ -303,10 +377,13 @@ def _send_repair(
             shuffle=False,
             status_note=f"播放区间 {format_ranges(indices, limit=8)}",
             interval_text=ranges_text,
+            events_json=events_json,
+            command_queue=command_queue,
         ).run(duration=duration)
     finally:
         awake.stop()
     _print_repair_hint(plan.total)
+    events.emit("state", state="completed")
 
 
 def _send_impl(
@@ -334,7 +411,12 @@ def _send_impl(
     session_file: str | None = None,
     shuffle: bool = False,
     keep_awake: bool = True,
+    events_json: bool = False,
 ) -> None:
+    if events_json:
+        events.enable_events()
+        events.emit("state", state="preparing")
+
     limits = ScanLimits(
         max_file_size=max_file_size or LIVE_LIMITS.max_file_size,
         max_files=LIVE_LIMITS.max_files,
@@ -369,6 +451,7 @@ def _send_impl(
                 camera=camera,
                 accurate_mask=accurate_mask,
                 keep_awake=keep_awake,
+                events_json=events_json,
             )
             return
 
@@ -446,6 +529,29 @@ def _send_impl(
         cycle_seconds = pages / max(effective_fps, 1e-6)
         ratio = (100.0 * plan.data_bytes / len(blob)) if blob else 0.0
 
+        events.emit(
+            "plan",
+            total=plan.total,
+            pages=pages,
+            session=plan.session_hex,
+            file_count=result.file_count,
+            total_bytes=result.total_bytes,
+            data_bytes=plan.data_bytes,
+            compression=plan.manifest.compression,
+            screen=[width, height],
+            layout={
+                "version": layout.version,
+                "ecc": layout.ecc,
+                "module_px": layout.module_px,
+                "columns": layout.columns,
+                "rows": layout.rows,
+                "per_screen": layout.per_screen,
+                "description": layout.describe(),
+            },
+            cycle_seconds=round(cycle_seconds, 2),
+            fps=round(effective_fps, 2),
+        )
+
         _echo("")
         _echo(f"输入    {result.file_count} 个文件 / {len(result.empty_dirs)} 个空目录，"
               f"{_human_bytes(result.total_bytes)}")
@@ -487,18 +593,30 @@ def _send_impl(
                 page = compose_page(plan.frames, index, layout, fps=fps, mask=mask)
                 page.save(target / f"page_{index:05d}.png", compress_level=1)
             _ok(f"已写出 {pages} 屏到 {target}")
-            _echo(f"接收端：qrfile decode {target} -o <还原目录>")
+            _echo(f"接收机器：qrfile decode {target} -o <还原目录>")
             return
 
         _echo("")
-        _echo("接收端命令：qrfile recv <输出目录>")
+        _echo("接收机器命令：qrfile recv <输出目录>")
         _echo("播放中：空格 暂停，↑/↓ 调速，底部输入框填播放区间，Esc 退出")
         _echo("")
+
+        command_queue: queue.Queue[str] | None = None
+        if events_json:
+            command_queue = queue.Queue()
+            threading.Thread(
+                target=_read_stdin_commands,
+                args=(command_queue,),
+                daemon=True,
+                name="qrfile-stdin-commands",
+            ).start()
+
         awake = KeepAwake()
         if keep_awake:
             awake.start()
         if awake.backend:
             _echo(f"已阻止息屏（{awake.backend}）")
+        events.emit("state", state="playing")
         try:
             try:
                 Player(
@@ -508,11 +626,19 @@ def _send_impl(
                     windowed=windowed,
                     mask=mask,
                     shuffle=shuffle,
+                    events_json=events_json,
+                    command_queue=command_queue,
                 ).run(duration=duration)
             finally:
                 awake.stop()
             _print_repair_hint(plan.total)
+            events.emit("state", state="completed")
         except ImportError as exc:
+            events.emit_error(
+                "no_display",
+                f"没有图形界面（{exc}）",
+                hint="请在带桌面的环境运行，或使用 --dump-pages 导出整屏 PNG。",
+            )
             raise InputError(
                 f"没有图形界面（{exc}）。可以用 --dump-pages <目录> 导出整屏 PNG。"
             ) from exc
@@ -553,6 +679,8 @@ def _send_impl(
 @click.option("--include", multiple=True, hidden=True)
 @click.option("--exclude", multiple=True, hidden=True)
 @click.option("--no-source-guard", is_flag=True, hidden=True)
+@click.option("--events-json", is_flag=True, hidden=True,
+              help="stdout 只输出 NDJSON 事件（图形界面使用）")
 def send_cmd(**kwargs) -> None:
     """高级命令：手动调参播放。日常请直接用 ``qrfile push <路径>``。"""
     sources = kwargs.get("sources")
@@ -572,7 +700,7 @@ def _decode_symbols(image, *, robust: bool):
     return decode_image(image, source="屏幕")
 
 
-def _restore(collector: LiveCollector, output: str, *, overwrite: bool, restore_times: bool) -> None:
+def _restore(collector: LiveCollector, output: str, *, overwrite: bool, restore_times: bool):
     session, stats = collector.finalize()
     _ok(
         f"收齐 {stats.accepted} 片（重复 {stats.duplicates}、坏帧 {stats.damaged}、"
@@ -593,6 +721,7 @@ def _restore(collector: LiveCollector, output: str, *, overwrite: bool, restore_
     _ok(f"还原 {report.written_count} 个文件到 {Path(output).resolve()}")
     if not report.is_byte_identical:
         _warn("有文件名被改动（内容仍然逐字节校验通过）")
+    return report
 
 
 def _receive_loop(
@@ -608,13 +737,24 @@ def _receive_loop(
     robust: bool,
     capture: str = "auto",
     keep_awake: bool = True,
+    events_json: bool = False,
 ) -> None:
+    if events_json:
+        events.enable_events()
+
     options = CaptureOptions(region=rect, fps=fps, backend=capture)
     collector = LiveCollector()
     frames_dir = Path(save_frames) if save_frames else None
     if frames_dir is not None:
         frames_dir.mkdir(parents=True, exist_ok=True)
 
+    events.emit(
+        "state",
+        state="receiving",
+        description=description,
+        region=rect,
+        fps=fps,
+    )
     _echo(f"采集：{description}，{fps:.1f} fps")
     if rect is not None:
         left, top, right, bottom = rect
@@ -639,10 +779,12 @@ def _receive_loop(
         for image in iter_frames(options, max_seconds=max_seconds):
             frames_seen += 1
             if frames_seen == 1 and _looks_blank(image):
-                _warn(
+                message = (
                     "采集到的第一帧几乎是纯色 —— 可能息屏/锁屏、窗口被遮挡，"
                     "或 --region 不对。"
                 )
+                _warn(message)
+                events.emit("warning", code="blank_frame", message=message)
             if frames_dir is not None:
                 saved += 1
                 image.save(frames_dir / f"frame_{saved:06d}.png", compress_level=1)
@@ -664,9 +806,14 @@ def _receive_loop(
             if collector.total and now - last_missing >= 5.0:
                 missing_now = collector.missing()
                 if missing_now:
-                    click.echo(
-                        f"\n缺 {len(missing_now)} 片："
-                        f"{format_ranges(missing_now, limit=25)}"
+                    ranges = format_ranges(missing_now, limit=25)
+                    _echo(f"\n缺 {len(missing_now)} 片：{ranges}")
+                    events.emit(
+                        "missing",
+                        indices=missing_now,
+                        ranges=ranges,
+                        total=collector.total,
+                        received=collector.progress().received,
                     )
                 last_missing = now
 
@@ -682,6 +829,12 @@ def _receive_loop(
                     image.save(debug_path)
                     _warn(f"5 秒内没解出任何码，已把最后一帧存到：{debug_path}")
                     _warn("打开看看：是黑屏/纯色，还是有二维码但模糊？")
+                    events.emit(
+                        "warning",
+                        code="no_frames_yet",
+                        message="5 秒内没解出任何码",
+                        path=str(debug_path),
+                    )
                 except OSError:
                     pass
                 debug_saved = True
@@ -689,40 +842,78 @@ def _receive_loop(
             if collector.complete:
                 break
     except KeyboardInterrupt:
-        click.echo("")
+        _echo("")
+        events.emit("state", state="cancelled")
     finally:
         awake.stop()
 
     _progress_line(collector.progress())
-    click.echo("")
+    _echo("")
 
     if not collector.complete:
         progress = collector.progress()
+        debug_path = str(Path.cwd() / "qrfile-debug.png")
         if progress.total == 0:
-            _warn(
+            message = (
                 "一帧都没解出来。检查：播放端是否在播放？采集区域是否包含二维码？"
                 "远端画面是否被缩放/压缩？可以加 --robust 再试。"
             )
+            _warn(message)
             if debug_saved:
-                _warn(f"诊断帧：{Path.cwd() / 'qrfile-debug.png'}（先看这张图）")
+                _warn(f"诊断帧：{debug_path}（先看这张图）")
+            events.emit_error(
+                "no_frames",
+                message,
+                hint="确认播放端在播放，并检查采集窗口/区域；必要时开启稳健模式。",
+                details={"debug_image": debug_path if debug_saved else None},
+            )
         else:
             missing = collector.missing()
             shown = format_ranges(missing, limit=1000)
             _warn(f"还缺 {len(missing)}/{progress.total} 片：{shown}")
             _warn("=" * 60)
             _warn("播放区间（保持本窗口运行）：")
-            _warn("  1) 在 A 机器播放器底部的「播放区间」输入框填入上面的范围，回车；")
-            _warn("  2) 或退出播放器后，在 A 机器执行：")
+            _warn("  1) 在发送机器播放器底部的「播放区间」输入框填入上面的范围，回车；")
+            _warn("  2) 或退出播放器后，在发送机器执行：")
             _warn(f'     qrfile push --repair "{shown}"')
             _warn("=" * 60)
             _warn("区间播放结束后，本窗口会继续接收并自动还原。")
+            events.emit_error(
+                "missing_chunks",
+                f"还缺 {len(missing)}/{progress.total} 片",
+                hint="把缺片范围粘贴到发送机器播放器底部的「播放区间」。",
+                details={
+                    "indices": missing,
+                    "ranges": shown,
+                    "total": progress.total,
+                },
+            )
         sys.exit(EXIT_VERIFY_FAILED)
 
-    _restore(
-        collector,
-        output,
-        overwrite=overwrite,
-        restore_times=not no_restore_times,
+    progress_before = collector.progress()
+    events.emit("state", state="verifying")
+    try:
+        report = _restore(
+            collector,
+            output,
+            overwrite=overwrite,
+            restore_times=not no_restore_times,
+        )
+    except QrFileError as exc:
+        events.emit_error(
+            "restore_failed",
+            str(exc),
+            hint="校验未通过，未写入任何文件。请检查源文件是否变化。",
+        )
+        raise
+    events.emit(
+        "state",
+        state="completed",
+        received=progress_before.received,
+        total=progress_before.total,
+        written=report.written_count,
+        output=str(Path(output).resolve()),
+        byte_identical=report.is_byte_identical,
     )
 
 
@@ -739,8 +930,12 @@ def _recv_impl(
     robust: bool,
     capture: str = "auto",
     keep_awake: bool = True,
+    events_json: bool = False,
 ) -> None:
+    if events_json:
+        events.enable_events()
     rect, description = resolve_region(region=region, window=window)
+    events.emit("window", rect=rect, description=description)
     _receive_loop(
         output,
         rect=rect,
@@ -753,6 +948,7 @@ def _recv_impl(
         robust=robust,
         capture=capture,
         keep_awake=keep_awake,
+        events_json=events_json,
     )
 
 
@@ -764,9 +960,13 @@ def _pull_impl(
     region: str | None,
     capture: str = "auto",
     keep_awake: bool = True,
+    events_json: bool = False,
 ) -> None:
+    if events_json:
+        events.enable_events()
     if window or region:
         rect, description = resolve_region(region=region, window=window)
+        events.emit("window", rect=rect, description=description)
         if window and activate_window(window):
             _echo("已把目标窗口调到前台")
             time.sleep(0.4)
@@ -775,6 +975,7 @@ def _pull_impl(
         if guessed is not None:
             rect, title = guessed
             description = f"自动定位窗口 {title!r}"
+            events.emit("window", rect=rect, description=description, title=title)
             _echo(f"自动定位到：{description}")
             if activate_window(title):
                 _echo("已把目标窗口调到前台")
@@ -782,6 +983,7 @@ def _pull_impl(
         else:
             rect = None
             description = "整个屏幕（没识别到远程桌面窗口，通常也能用）"
+            events.emit("window", rect=None, description=description)
 
     _receive_loop(
         output,
@@ -795,6 +997,7 @@ def _pull_impl(
         robust=safe,
         capture=capture,
         keep_awake=keep_awake,
+        events_json=events_json,
     )
 
 
@@ -814,7 +1017,9 @@ def _pull_impl(
 @click.option("--duration", type=float, default=1800.0, show_default=True,
               help="多少秒后自动停；0=一直循环（默认 30 分钟，防卡死）")
 @click.option("--repair", default=None, metavar="RANGES",
-              help="只播放指定分片区间，例如 12-14,204（保持接收端运行）")
+              help="只播放指定分片区间，例如 12-14,204（保持接收机器运行）")
+@click.option("--events-json", is_flag=True, hidden=True,
+              help="stdout 只输出 NDJSON 事件（图形界面使用）")
 def push_cmd(
     sources,
     fast: bool,
@@ -823,8 +1028,9 @@ def push_cmd(
     duration: float,
     repair: str | None,
     keep_awake: bool,
+    events_json: bool,
 ) -> None:
-    """A 机器：把文件/目录播出去。日常就一条：qrfile push <路径>"""
+    """发送机器：把文件/目录播出去。日常就一条：qrfile push <路径>"""
     if repair:
         if fast or safe or camera:
             raise click.UsageError("--repair 不能和 --fast/--safe/--camera 同时用")
@@ -853,6 +1059,7 @@ def push_cmd(
                 session_file=None,
                 shuffle=False,
                 keep_awake=keep_awake,
+                events_json=events_json,
             )
         )
         return
@@ -892,6 +1099,7 @@ def push_cmd(
             accurate_mask=camera,
             duration=duration,
             keep_awake=keep_awake,
+            events_json=events_json,
         )
     )
 
@@ -904,6 +1112,8 @@ def push_cmd(
 @click.option("--capture", type=click.Choice(["auto", "dxcam", "mss", "imagegrab"]),
               default="auto", hidden=True, help="采集后端（诊断用）")
 @click.option("--keep-awake/--no-keep-awake", default=True, hidden=True)
+@click.option("--events-json", is_flag=True, hidden=True,
+              help="stdout 只输出 NDJSON 事件（图形界面使用）")
 def pull_cmd(
     output: str,
     safe: bool,
@@ -911,8 +1121,9 @@ def pull_cmd(
     region: str | None,
     capture: str,
     keep_awake: bool,
+    events_json: bool,
 ) -> None:
-    """B 机器：采集屏幕上的二维码并还原。日常就一条：qrfile pull <输出目录>"""
+    """接收机器：采集屏幕上的二维码并还原。日常就一条：qrfile pull <输出目录>"""
     _run(
         lambda: _pull_impl(
             output,
@@ -921,6 +1132,7 @@ def pull_cmd(
             region=region,
             capture=capture,
             keep_awake=keep_awake,
+            events_json=events_json,
         )
     )
 
@@ -939,6 +1151,8 @@ def pull_cmd(
 @click.option("--capture", type=click.Choice(["auto", "dxcam", "mss", "imagegrab"]),
               default="auto", hidden=True, help="采集后端（诊断用）")
 @click.option("--keep-awake/--no-keep-awake", default=True, hidden=True)
+@click.option("--events-json", is_flag=True, hidden=True,
+              help="stdout 只输出 NDJSON 事件（图形界面使用）")
 def recv_cmd(**kwargs) -> None:
     """采集屏幕上的二维码流，收齐后自动还原成文件树。"""
     _run(lambda: _recv_impl(kwargs.pop("output"), **kwargs))

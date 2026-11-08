@@ -1,0 +1,1829 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>qrfile 图形界面开发方案 · v1.0</title>
+<style>
+:root{
+  --bg:#f3f6fb;
+  --surface:#ffffff;
+  --surface-2:#f8fafc;
+  --line:#e2e8f0;
+  --line-strong:#cbd5e1;
+  --text:#0f172a;
+  --muted:#5f6b7c;
+  --faint:#94a3b8;
+  --accent:#0b7fab;
+  --accent-2:#14b8a6;
+  --accent-soft:#e0f2fe;
+  --ok:#0f9f6e;
+  --ok-soft:#dcfce7;
+  --warn:#b45309;
+  --warn-soft:#fef3c7;
+  --danger:#b42318;
+  --danger-soft:#fee4e2;
+  --radius:16px;
+  --shadow:0 24px 60px rgba(16,24,40,.12);
+  --mono:ui-monospace,SFMono-Regular,Consolas,"Liberation Mono",monospace;
+  --sans:"Inter","PingFang SC","Microsoft YaHei","Noto Sans CJK SC",system-ui,-apple-system,sans-serif;
+}
+*{box-sizing:border-box}
+html{scroll-behavior:smooth}
+body{
+  margin:0;background:var(--bg);color:var(--text);
+  font-family:var(--sans);font-size:15px;line-height:1.72;
+  -webkit-font-smoothing:antialiased;
+}
+a{color:var(--accent);text-decoration:none}
+a:hover{text-decoration:underline}
+h1,h2,h3,h4,h5{line-height:1.3;margin:0;letter-spacing:-.01em}
+p{margin:.55em 0}
+ul,ol{margin:.5em 0;padding-left:1.35em}
+li{margin:.28em 0}
+strong{font-weight:700}
+small{color:var(--muted)}
+code{
+  font-family:var(--mono);font-size:.9em;background:#eef2f7;
+  color:#243447;padding:1px 5px;border-radius:5px;
+}
+pre{
+  background:#0b1220;color:#dbe7f3;padding:16px 18px;border-radius:12px;
+  overflow:auto;font:12px/1.7 var(--mono);margin:12px 0;
+}
+pre code{background:none;color:inherit;padding:0}
+
+/* ---------------------------------------------------------------- cover */
+.cover{
+  position:relative;overflow:hidden;color:#eaf2f8;
+  padding:76px 8vw 68px;
+  background:
+    radial-gradient(1100px 520px at 8% -12%, rgba(20,184,166,.28), transparent 62%),
+    radial-gradient(900px 460px at 92% 6%, rgba(56,189,248,.20), transparent 58%),
+    linear-gradient(135deg,#071521 0%,#0a2237 52%,#0a3540 100%);
+}
+.cover::after{
+  content:"";position:absolute;inset:0;pointer-events:none;
+  background-image:
+    linear-gradient(rgba(255,255,255,.045) 1px,transparent 1px),
+    linear-gradient(90deg,rgba(255,255,255,.045) 1px,transparent 1px);
+  background-size:38px 38px;
+  mask-image:linear-gradient(to bottom,rgba(0,0,0,.72),transparent 88%);
+}
+.cover-inner{position:relative;z-index:1;max-width:1180px;margin:0 auto}
+.badge{
+  display:inline-flex;align-items:center;gap:8px;
+  border:1px solid rgba(255,255,255,.22);border-radius:999px;
+  padding:6px 13px;font-size:12px;letter-spacing:.08em;
+  color:#bde9e2;background:rgba(255,255,255,.05);
+}
+.badge i{width:6px;height:6px;border-radius:50%;background:#2dd4bf;display:inline-block}
+.cover h1{
+  font-size:clamp(36px,5.4vw,62px);font-weight:800;line-height:1.12;
+  margin:22px 0 14px;letter-spacing:-.025em;
+}
+.cover h1 span{
+  background:linear-gradient(100deg,#5eead4,#7dd3fc 60%,#a5b4fc);
+  -webkit-background-clip:text;background-clip:text;color:transparent;
+}
+.cover .sub{max-width:720px;font-size:17px;color:#a9c2d3;margin:0 0 30px}
+.cover .meta{display:flex;flex-wrap:wrap;gap:10px 26px;font-size:12.5px;color:#8fadc0}
+.cover .meta b{color:#d9eaf5;font-weight:600}
+.cover-stats{
+  display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:12px;
+  margin-top:40px;max-width:940px;
+}
+.cover-stat{
+  border:1px solid rgba(255,255,255,.13);border-radius:14px;
+  padding:14px 16px;background:rgba(255,255,255,.045);backdrop-filter:blur(4px);
+}
+.cover-stat b{display:block;font-size:22px;color:#fff;letter-spacing:-.02em}
+.cover-stat span{font-size:11.5px;color:#8fadc0}
+
+/* ---------------------------------------------------------------- layout */
+.doc{
+  display:grid;grid-template-columns:238px minmax(0,1fr);gap:46px;
+  max-width:1320px;margin:0 auto;padding:44px 30px 96px;
+}
+.toc{position:sticky;top:22px;align-self:start}
+.toc-title{
+  font-size:11px;letter-spacing:.14em;color:var(--faint);
+  text-transform:uppercase;margin:0 0 10px 10px;
+}
+.toc a{
+  display:block;padding:6px 10px;border-radius:8px;
+  font-size:13px;color:var(--muted);line-height:1.45;
+}
+.toc a:hover{background:#fff;color:var(--text);text-decoration:none}
+.toc a.sub{padding-left:24px;font-size:12.2px;color:#7a8698}
+main{min-width:0}
+section{margin-bottom:58px;scroll-margin-top:24px}
+.section-kicker{
+  font:700 11px/1 var(--mono);letter-spacing:.14em;
+  color:var(--accent);text-transform:uppercase;margin-bottom:9px;
+}
+h2{font-size:clamp(24px,3vw,34px);font-weight:800;letter-spacing:-.02em}
+.lede{font-size:16px;color:var(--muted);max-width:860px;margin:12px 0 24px}
+h3{font-size:19px;font-weight:750;margin:30px 0 10px}
+h4{font-size:15px;font-weight:700;margin:18px 0 6px}
+.panel{
+  background:var(--surface);border:1px solid var(--line);
+  border-radius:var(--radius);padding:26px 28px;
+  box-shadow:0 10px 30px rgba(16,24,40,.045);
+}
+.panel + .panel{margin-top:16px}
+.grid-2{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:16px}
+.grid-3{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:14px}
+.grid-4{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:12px}
+.mini{
+  background:var(--surface-2);border:1px solid var(--line);
+  border-radius:12px;padding:14px 16px;
+}
+.mini b{display:block;font-size:13px;margin-bottom:3px}
+.mini span{font-size:12px;color:var(--muted)}
+.num-badge{
+  display:inline-grid;place-items:center;width:26px;height:26px;
+  border-radius:8px;background:var(--accent-soft);color:#075985;
+  font:700 12px/1 var(--mono);margin-right:9px;
+}
+
+/* ---------------------------------------------------------------- tables */
+table{
+  width:100%;border-collapse:collapse;font-size:13px;
+  background:var(--surface);border-radius:12px;overflow:hidden;
+}
+th,td{padding:10px 12px;text-align:left;vertical-align:top;border-bottom:1px solid var(--line)}
+th{background:#f1f5f9;color:#475569;font-size:11.5px;letter-spacing:.04em;font-weight:700}
+tr:last-child td{border-bottom:none}
+tr.recommend td{background:#f0fdfa}
+tr.recommend td:first-child{box-shadow:inset 3px 0 0 var(--accent-2)}
+.tbl-wrap{overflow-x:auto;border:1px solid var(--line);border-radius:12px}
+
+/* ---------------------------------------------------------------- callouts */
+.callout{
+  border-left:4px solid var(--accent);background:#f0f9ff;
+  padding:13px 16px;border-radius:0 12px 12px 0;margin:14px 0;font-size:13.5px;
+}
+.callout.warn{border-color:#f59e0b;background:#fffbeb}
+.callout.danger{border-color:#ef4444;background:#fef2f2}
+.callout.ok{border-color:#10b981;background:#ecfdf5}
+.callout b{display:block;margin-bottom:2px}
+
+/* ---------------------------------------------------------------- badges */
+.chip{
+  display:inline-flex;align-items:center;gap:5px;
+  font-size:11px;font-weight:600;padding:3px 9px;border-radius:999px;
+  background:#e2e8f0;color:#475569;white-space:nowrap;
+}
+.chip.ok{background:var(--ok-soft);color:#166534}
+.chip.warn{background:var(--warn-soft);color:#92400e}
+.chip.err{background:var(--danger-soft);color:#991b1b}
+.chip.info{background:var(--accent-soft);color:#075985}
+.chip.dark{background:#13263c;color:#c7d7e6}
+
+/* ---------------------------------------------------------------- mockups */
+figure.mock-figure{margin:22px 0 30px}
+figcaption{
+  font-size:12.5px;color:var(--muted);margin:10px 2px 0;
+}
+figcaption b{color:var(--text)}
+.mockup{
+  background:#fff;border-radius:16px;overflow:hidden;
+  border:1px solid #dbe3ec;box-shadow:var(--shadow);
+  font-size:12px;
+}
+.mock-bar{
+  height:38px;display:flex;align-items:center;gap:7px;
+  padding:0 14px;background:linear-gradient(#f3f6fa,#eef2f7);
+  border-bottom:1px solid #dde5ee;
+}
+.dot{width:10px;height:10px;border-radius:50%;display:inline-block}
+.dot.r{background:#ff5f57}.dot.y{background:#febc2e}.dot.g{background:#28c840}
+.mock-title{
+  margin-left:10px;font:11.5px var(--mono);color:#7c8797;
+  overflow:hidden;text-overflow:ellipsis;white-space:nowrap;
+}
+.mock-body{display:grid;grid-template-columns:210px minmax(0,1fr);min-height:540px}
+.rail{
+  background:#0b1b2c;color:#c7d7e6;padding:18px 13px;
+  display:flex;flex-direction:column;gap:5px;
+}
+.rail-brand{
+  display:flex;align-items:center;gap:10px;color:#fff;font-weight:750;
+  font-size:16px;margin:2px 6px 20px;letter-spacing:-.01em;
+}
+.logo{
+  width:28px;height:28px;border-radius:8px;display:grid;place-items:center;
+  background:linear-gradient(135deg,#5eead4,#38bdf8);color:#062033;
+  font:800 14px/1 var(--mono);
+}
+.nav-item{
+  display:flex;align-items:center;gap:9px;padding:8px 10px;
+  border-radius:9px;font-size:12.5px;color:#93a9bd;
+}
+.nav-item.active{background:#172e47;color:#fff;box-shadow:inset 3px 0 0 #2dd4bf}
+.nav-item .ic{width:15px;height:15px;opacity:.9;display:inline-grid;place-items:center}
+.nav-spacer{flex:1}
+.rail-foot{
+  font-size:10.5px;color:#6d8399;border-top:1px solid #1b324a;
+  padding:12px 6px 2px;margin-top:6px;line-height:1.6;
+}
+.screen-main{
+  background:#f7f9fc;padding:20px 22px 18px;
+  display:flex;flex-direction:column;gap:14px;min-width:0;
+}
+.screen-head{display:flex;align-items:flex-start;justify-content:space-between;gap:14px}
+.screen-head h4{font-size:17px;font-weight:800;margin:0;letter-spacing:-.015em}
+.screen-head p{margin:3px 0 0;color:#7b8798;font-size:11.5px}
+.card{
+  background:#fff;border:1px solid #e3e9f1;border-radius:12px;padding:14px;
+}
+.card-title{font-size:12px;font-weight:750;color:#334155;margin-bottom:10px}
+.role-grid{display:grid;grid-template-columns:1fr 1fr;gap:12px}
+.role-card{
+  background:#fff;border:1px solid #e3e9f1;border-radius:14px;
+  padding:16px;display:flex;flex-direction:column;gap:7px;position:relative;
+}
+.role-card.primary{border-color:#7dd3fc;box-shadow:0 0 0 3px rgba(14,165,233,.10)}
+.role-top{display:flex;align-items:center;justify-content:space-between}
+.role-icon{
+  width:34px;height:34px;border-radius:10px;display:grid;place-items:center;
+  font:800 14px/1 var(--mono);background:#e0f2fe;color:#075985;
+}
+.role-card:last-child .role-icon{background:#dcfce7;color:#166534}
+.role-card h5{font-size:15px;font-weight:800;margin:2px 0 0}
+.role-card p{margin:0;font-size:11.5px;color:#6b7788;line-height:1.55}
+.role-meta{font-size:10.5px;color:#8b97a7;font-family:var(--mono)}
+.btn{
+  display:inline-flex;align-items:center;justify-content:center;gap:6px;
+  padding:8px 13px;border-radius:8px;font-size:12px;font-weight:700;
+  border:1px solid transparent;white-space:nowrap;
+}
+.btn.sm{padding:5px 10px;font-size:11px;border-radius:7px}
+.btn-primary{background:#0ea5e9;color:#04121f}
+.btn-ghost{background:#fff;border-color:#dbe3ec;color:#334155}
+.btn-danger{background:#fee2e2;color:#991b1b}
+.btn-dark{background:#0f2438;color:#dbeafe}
+.home-grid{display:grid;grid-template-columns:1.35fr 1fr;gap:12px}
+.mini-row{
+  display:flex;align-items:center;gap:9px;padding:7px 0;
+  border-top:1px dashed #e8edf4;font-size:11px;color:#5f6b7c;
+}
+.mini-row:first-of-type{border-top:none}
+.mini-row .nm{flex:1;color:#334155;font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.mini-row .tm{font-family:var(--mono);font-size:10px;color:#94a3b8}
+.check{display:flex;align-items:center;gap:8px;font-size:11px;color:#475569;padding:4px 0}
+.check i{
+  width:16px;height:16px;border-radius:50%;background:#dcfce7;color:#15803d;
+  display:grid;place-items:center;font-size:10px;font-style:normal;font-weight:800;
+}
+.check.bad i{background:#fee2e2;color:#b42318}
+
+/* steps */
+.steps{display:flex;align-items:center;gap:6px;flex-wrap:wrap}
+.step{display:flex;align-items:center;gap:7px;font-size:11px;color:#94a3b8;font-weight:600}
+.step .n{
+  width:21px;height:21px;border-radius:50%;display:grid;place-items:center;
+  background:#e8edf4;color:#7b8798;font:700 10px/1 var(--mono);
+}
+.step.active{color:#075985}
+.step.active .n{background:#0ea5e9;color:#04121f}
+.step.done{color:#15803d}
+.step.done .n{background:#22c55e;color:#052e16}
+.step-sep{width:20px;height:1px;background:#cbd5e1}
+
+/* form */
+.form-grid{display:grid;grid-template-columns:1fr 1fr;gap:12px}
+.field{display:flex;flex-direction:column;gap:5px}
+.field label{font-size:10.5px;font-weight:700;color:#64748b;letter-spacing:.03em}
+.input{
+  border:1px solid #dbe3ec;border-radius:8px;background:#fff;
+  padding:8px 10px;font-size:11.5px;color:#334155;min-height:34px;
+  display:flex;align-items:center;
+}
+.input.mono{font-family:var(--mono);font-size:11px}
+.input.focus{border-color:#38bdf8;box-shadow:0 0 0 3px rgba(56,189,248,.15)}
+.dropzone{
+  border:1.5px dashed #b9c7d8;border-radius:12px;background:#f8fbfe;
+  padding:18px;text-align:center;color:#7b8798;
+}
+.dropzone b{display:block;color:#334155;font-size:12.5px;margin-bottom:3px}
+.file-row{
+  display:flex;align-items:center;gap:9px;padding:7px 9px;
+  border:1px solid #e8edf4;border-radius:8px;margin-top:7px;background:#fff;
+}
+.file-row .fi{
+  width:26px;height:26px;border-radius:7px;background:#e0f2fe;color:#075985;
+  display:grid;place-items:center;font:700 10px/1 var(--mono);
+}
+.file-row .nm{flex:1;font-size:11px;color:#334155;font-weight:600}
+.file-row .sz{font:10px var(--mono);color:#94a3b8}
+.radio-row{display:flex;gap:7px;flex-wrap:wrap}
+.radio{
+  border:1px solid #dbe3ec;border-radius:9px;padding:7px 10px;
+  font-size:11px;color:#475569;display:flex;align-items:center;gap:7px;background:#fff;
+}
+.radio.on{border-color:#7dd3fc;background:#f0f9ff;color:#075985;font-weight:700}
+.radio b{font-weight:700}
+.radio small{display:block;font-size:9.5px;color:#8b97a7;font-weight:500}
+.radio .dot2{width:12px;height:12px;border-radius:50%;border:2px solid #cbd5e1;display:inline-block}
+.radio.on .dot2{border-color:#0ea5e9;box-shadow:inset 0 0 0 2.5px #fff,inset 0 0 0 6px #0ea5e9}
+
+/* progress */
+.monitor-grid{display:grid;grid-template-columns:230px minmax(0,1fr) 210px;gap:12px}
+.ring-wrap{display:flex;flex-direction:column;align-items:center;gap:8px;padding:8px 0}
+.ring{
+  --p:68;width:112px;height:112px;border-radius:50%;
+  background:conic-gradient(#0ea5e9 calc(var(--p)*1%),#e6edf5 0);
+  display:grid;place-items:center;position:relative;
+}
+.ring::before{content:"";position:absolute;inset:9px;background:#fff;border-radius:50%}
+.ring .val{position:relative;font:800 23px/1 var(--sans);letter-spacing:-.03em}
+.ring .lbl{position:relative;font-size:9.5px;color:#94a3b8;margin-top:2px}
+.stat{display:flex;justify-content:space-between;font-size:10.5px;color:#7b8798;padding:5px 0;border-bottom:1px dashed #e8edf4}
+.stat:last-child{border-bottom:none}
+.stat b{color:#334155;font-family:var(--mono);font-size:10.5px}
+.legend{display:flex;gap:10px;font-size:9.5px;color:#7b8798;flex-wrap:wrap;margin-top:8px}
+.legend span{display:inline-flex;align-items:center;gap:4px}
+.sw{width:9px;height:9px;border-radius:2px;display:inline-block}
+.sw.ok{background:#34d399}.sw.miss{background:#fbbf24}.sw.dup{background:#cbd5e1}
+.chunk-grid{display:grid;grid-template-columns:repeat(24,1fr);gap:3px;margin-top:8px}
+.chunk{aspect-ratio:1/1;border-radius:2px;background:#34d399;min-width:0}
+.chunk.miss{background:#fbbf24}
+.qr-preview{
+  width:132px;height:132px;background:#fff;border:1px solid #e3e9f1;
+  border-radius:10px;display:grid;place-items:center;margin:0 auto;
+}
+canvas.qr{width:116px;height:116px;display:block}
+.interval-box{
+  border:1px solid #dbe3ec;border-radius:10px;background:#fff;padding:10px;
+}
+.interval-box .lab{font-size:10px;font-weight:700;color:#64748b;margin-bottom:5px}
+.interval-box .input.mono{font-size:10.5px;padding:6px 8px;min-height:30px}
+.event-strip{
+  background:#0b1220;border-radius:10px;padding:9px 12px;
+  font:10px/1.75 var(--mono);color:#9fb3c8;max-height:92px;overflow:hidden;
+}
+.event-strip .t{color:#5b7086}
+.event-strip .ok{color:#4ade80}
+.event-strip .w{color:#fbbf24}
+.event-strip .e{color:#f87171}
+.topbar{display:flex;align-items:center;justify-content:space-between;gap:10px}
+.window-chip{
+  display:inline-flex;align-items:center;gap:7px;font-size:10.5px;
+  border:1px solid #dbe3ec;border-radius:999px;padding:5px 10px;background:#fff;color:#475569;
+}
+.window-chip b{color:#0f172a}
+.banner{
+  display:flex;align-items:center;gap:10px;border:1px solid #fde68a;
+  background:#fffbeb;color:#92400e;border-radius:10px;padding:9px 12px;font-size:11px;
+}
+.banner .grow{flex:1}
+.banner.mono{font-family:var(--mono);font-size:10.5px}
+.mock-footer{
+  margin-top:auto;display:flex;align-items:center;justify-content:space-between;
+  gap:10px;border-top:1px solid #e8edf4;padding-top:10px;
+}
+.mock-footer .hint{font-size:10px;color:#94a3b8}
+
+/* annotations */
+.notes{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px;margin-top:12px}
+.note{
+  background:#fff;border:1px solid var(--line);border-radius:10px;padding:11px 13px;
+}
+.note b{display:block;font-size:11.5px;margin-bottom:2px}
+.note span{font-size:11px;color:var(--muted);line-height:1.55}
+
+/* flow */
+.flow{display:flex;flex-wrap:wrap;align-items:center;gap:8px;margin:12px 0}
+.flow-node{
+  background:#fff;border:1px solid #dbe3ec;border-radius:9px;
+  padding:8px 11px;font-size:11.5px;font-weight:600;color:#334155;
+}
+.flow-node.hi{border-color:#7dd3fc;background:#f0f9ff;color:#075985}
+.flow-arrow{color:#94a3b8;font-size:14px}
+.flow-label{font-size:10px;color:#94a3b8;margin-left:2px}
+
+/* timeline */
+.timeline{display:grid;grid-template-columns:150px minmax(0,1fr);gap:8px 14px;align-items:center;margin-top:12px}
+.tl-label{font-size:12px;color:#475569;font-weight:600}
+.tl-track{height:26px;background:#eef2f7;border-radius:6px;position:relative;overflow:hidden}
+.tl-bar{
+  position:absolute;top:3px;bottom:3px;border-radius:4px;
+  background:linear-gradient(90deg,#38bdf8,#2dd4bf);
+  display:flex;align-items:center;padding:0 8px;
+  font:700 10px/1 var(--mono);color:#04121f;white-space:nowrap;
+}
+.tl-bar.gate{background:linear-gradient(90deg,#fbbf24,#f59e0b);color:#451a03}
+.tl-bar.solid{background:linear-gradient(90deg,#818cf8,#6366f1);color:#eef2ff}
+
+/* misc */
+.kv{display:grid;grid-template-columns:130px 1fr;gap:6px 14px;font-size:12.5px}
+.kv dt{color:var(--muted)}
+.kv dd{margin:0;color:#334155}
+.small-list{font-size:12.5px;color:var(--muted)}
+.two-col{display:grid;grid-template-columns:1fr 1fr;gap:24px}
+.anchor{scroll-margin-top:24px}
+.hr{height:1px;background:var(--line);margin:22px 0}
+.foot{
+  border-top:1px solid var(--line);padding:22px 30px 40px;text-align:center;
+  font-size:11.5px;color:#8b97a7;
+}
+@media (max-width:1060px){
+  .doc{grid-template-columns:1fr;padding:28px 18px 70px}
+  .toc{display:none}
+  .mock-body{grid-template-columns:176px minmax(0,1fr)}
+  .monitor-grid{grid-template-columns:1fr}
+  .notes{grid-template-columns:1fr}
+  .grid-2,.grid-3,.grid-4,.two-col{grid-template-columns:1fr}
+  .cover-stats{grid-template-columns:1fr 1fr}
+}
+@media print{
+  body{background:#fff}
+  .cover{background:#0a2237 !important;-webkit-print-color-adjust:exact;print-color-adjust:exact}
+  .toc{display:none}
+  .doc{display:block;max-width:none;padding:20px}
+  .mockup{box-shadow:none;break-inside:avoid}
+  section{break-inside:avoid}
+}
+</style>
+</head>
+<body>
+
+<header class="cover">
+  <div class="cover-inner">
+    <span class="badge"><i></i> 方案报告 · 评审稿</span>
+    <h1>qrfile 图形界面<br><span>开发方案</span></h1>
+    <p class="sub">
+      从「给 CLI 套一个窗口」到「以传输任务为中心的桌面控制台」。
+      本报告重新定义信息架构、交互流程、技术选型与交付节奏。
+    </p>
+    <div class="meta">
+      <span>版本 <b>v1.0</b></span>
+      <span>日期 <b>2026-11-07</b></span>
+      <span>范围 <b>桌面 UI / 核心事件层 / 打包</b></span>
+      <span>状态 <b>待评审</b></span>
+    </div>
+    <div class="cover-stats">
+      <div class="cover-stat"><b>7</b><span>核心页面与流程</span></div>
+      <div class="cover-stat"><b>6–8 周</b><span>单人开发估算</span></div>
+      <div class="cover-stat"><b>4</b><span>技术方案对比</span></div>
+      <div class="cover-stat"><b>0</b><span>对现有 CLI 的破坏性改动</span></div>
+    </div>
+  </div>
+</header>
+
+<div class="doc">
+  <nav class="toc">
+    <p class="toc-title">目录</p>
+    <a href="#summary">1. 执行摘要</a>
+    <a href="#review">2. 上一版 UI 复盘</a>
+    <a href="#goals">3. 目标与非目标</a>
+    <a href="#users">4. 用户与场景</a>
+    <a href="#principles">5. 设计原则</a>
+    <a href="#ia">6. 信息架构</a>
+    <a href="#mockups">7. 效果图</a>
+    <a class="sub" href="#m-home">7.1 首页 / 角色选择</a>
+    <a class="sub" href="#m-send">7.2 发送设置</a>
+    <a class="sub" href="#m-monitor">7.3 发送监控</a>
+    <a class="sub" href="#m-receive">7.4 接收监控</a>
+    <a class="sub" href="#m-interval">7.5 播放区间</a>
+    <a class="sub" href="#m-diag">7.6 诊断与错误</a>
+    <a href="#flows">8. 核心流程</a>
+    <a href="#tech">9. 技术选型</a>
+    <a href="#architecture">10. 系统架构</a>
+    <a href="#plan">11. 里程碑与排期</a>
+    <a href="#testing">12. 测试与验收</a>
+    <a href="#risks">13. 风险与对策</a>
+    <a href="#decisions">14. 待决策事项</a>
+    <a href="#appendix">15. 附录</a>
+  </nav>
+
+  <main>
+
+    <!-- ============================================================ 1 -->
+    <section id="summary">
+      <p class="section-kicker">01 · Executive Summary</p>
+      <h2>执行摘要</h2>
+      <p class="lede">
+        上一版 UI 已撤回。问题不在“有没有窗口”，而在于它仍然是 CLI 的附属品：
+        用日志当反馈、用 Tab 平铺功能、用布尔值管理任务生命周期。本方案从产品形态重新出发。
+      </p>
+
+      <div class="callout ok" style="margin:0 0 18px">
+        <b>实施状态（2026-11-07）</b>
+        M0 已验证：PySide6 6.9.3 的 Qt6Core 依赖 GLIBC_2.28，RHEL 8 可用；
+        M1 结构化事件层、M2 主框架、M3 发送流程、M4 接收流程已落地为 0.7.0 初版；
+        M5（区间弹窗完善、诊断/错误卡片）与 M6（Windows 打包、视觉回归）继续推进。
+      </div>
+
+      <div class="panel">
+        <div class="grid-2">
+          <div>
+            <h4>核心判断</h4>
+            <ul>
+              <li><strong>不是表单，是任务流。</strong> 用户的目标只有两个：把文件送出去、把文件收回来。界面应围绕这两个任务组织，而不是围绕命令参数。</li>
+              <li><strong>角色先行。</strong> 发送机器和接收机器是两个完全不同的工作场景，首页必须先让用户选角色，再进入对应流程。</li>
+              <li><strong>状态必须可视化。</strong> 传输的核心信息是“收了多少、缺哪些、下一步做什么”。分片热力图比滚动日志更有效。</li>
+              <li><strong>UI 不解析日志。</strong> 新增结构化事件层，CLI 和 GUI 消费同一套 <code>TransferEvent</code>，避免脆弱的 stdout 抓取。</li>
+            </ul>
+          </div>
+          <div>
+            <h4>建议方案</h4>
+            <ul>
+              <li><strong>技术栈：</strong> PySide6 / Qt 6 LTS 作为主界面；Phase 0 先在 RHEL 8 + Windows 11 上做打包与 glibc 验证。</li>
+              <li><strong>进程模型：</strong> 主界面常驻，全屏播放器作为独立子进程；事件通过 NDJSON / 本地 IPC 回流。</li>
+              <li><strong>交付策略：</strong> 先做核心事件层，再做页面；CLI 保持不变，GUI 可随时回退。</li>
+              <li><strong>周期：</strong> 约 32–37 人日（单人 6–8 周），7 个里程碑。</li>
+            </ul>
+          </div>
+        </div>
+
+        <div class="callout ok" style="margin-top:20px">
+          <b>一句话结论</b>
+          先把“传输任务状态”做成可复用、可测试的核心，再用 Qt 做一层薄而清晰的界面；
+          不要在 Tk 里继续堆控件，也不要让 UI 依赖控制台输出。
+        </div>
+      </div>
+    </section>
+
+    <!-- ============================================================ 2 -->
+    <section id="review">
+      <p class="section-kicker">02 · Post-mortem</p>
+      <h2>上一版 UI 复盘</h2>
+      <p class="lede">
+        上一版实现的核心问题可以归为五类：信息架构、反馈方式、生命周期、技术约束、交付方式。
+        下表按“现象 → 根因 → 本方案对策”列出。
+      </p>
+
+      <div class="tbl-wrap">
+        <table>
+          <thead>
+            <tr><th style="width:23%">现象</th><th style="width:25%">根因</th><th style="width:26%">影响</th><th style="width:26%">本方案对策</th></tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td>发送、接收、诊断挤在三个 Tab 里</td>
+              <td>按“功能”而不是按“任务/角色”组织信息</td>
+              <td>发送机器 / 接收机器场景混淆，首次使用者不知道先做什么</td>
+              <td>角色首页 + 发送/接收两条独立向导</td>
+            </tr>
+            <tr>
+              <td>底部日志是主要反馈</td>
+              <td>子进程 stdout 直接倾倒进文本框</td>
+              <td>进度不可读、错误不可操作、用户被迫读控制台</td>
+              <td>结构化事件 + 进度环 + 分片热力图 + 错误卡片</td>
+            </tr>
+            <tr>
+              <td>按钮启停靠一个 <code>running</code> 布尔值</td>
+              <td>没有显式任务状态机</td>
+              <td>停止、重试、关闭窗口的边界行为不稳定</td>
+              <td>Idle → Preparing → Playing/Receiving → … → Done 状态机</td>
+            </tr>
+            <tr>
+              <td>全屏播放器与主窗口抢焦点</td>
+              <td>播放器、主界面、日志在同一个事件循环里</td>
+              <td>播放时主界面无响应；VNC 下键盘行为不可预测</td>
+              <td>播放器独立子进程；主界面只做监控与区间控制</td>
+            </tr>
+            <tr>
+              <td>文件选择只能填一个路径</td>
+              <td>没有原生对话框、拖拽、最近记录</td>
+              <td>重复操作多，易输错路径</td>
+              <td>QFileDialog + 拖拽 + 最近路径 + 参数记忆</td>
+            </tr>
+            <tr>
+              <td>GUI 打包进 console exe</td>
+              <td>一个入口同时承担 CLI 和 GUI</td>
+              <td>双击出现黑色控制台窗口，体验割裂</td>
+              <td>拆分 <code>qrfile</code>（console）与 <code>qrfile-gui</code>（windowed）</td>
+            </tr>
+            <tr>
+              <td>进度用 <code>\r</code> 覆盖同一行</td>
+              <td>CLI 输出协议不是为 UI 设计的</td>
+              <td>管道里 \r 堆积，日志难以阅读</td>
+              <td>事件层直接传出 <code>received/total</code>，UI 自己渲染</td>
+            </tr>
+            <tr>
+              <td>错误只弹 messagebox</td>
+              <td>没有错误分类与恢复动作</td>
+              <td>用户只知道“失败了”，不知道下一步</td>
+              <td>错误卡片：人话 + 原因 + ≤3 个动作 + 可展开详情</td>
+            </tr>
+            <tr>
+              <td>测试只覆盖窗口构造与参数拼接</td>
+              <td>UI 逻辑与 Tk 强耦合</td>
+              <td>交互回归、DPI、跨平台问题无法提前发现</td>
+              <td>状态机单测 + offscreen 组件测试 + 截图回归 + E2E</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+
+      <div class="callout danger" style="margin-top:16px">
+        <b>结论</b>
+        继续在 Tk 上打补丁的边际收益很低。下一版需要同时调整<strong>交互模型</strong>和
+        <strong>技术底座</strong>，但可以保留现有编码/解码/抓屏核心不动。
+      </div>
+    </section>
+
+    <!-- ============================================================ 3 -->
+    <section id="goals">
+      <p class="section-kicker">03 · Goals</p>
+      <h2>目标与非目标</h2>
+
+      <div class="grid-2">
+        <div class="panel">
+          <h4>目标（v1 必须满足）</h4>
+          <ul>
+            <li><strong>5 分钟上手：</strong> 从打开程序到开始传输，不需要阅读文档。</li>
+            <li><strong>状态可回答：</strong> 任何时刻都能看到“在做什么、进度多少、缺什么、下一步”。</li>
+            <li><strong>行为一致：</strong> GUI 与 CLI 使用同一套核心逻辑、错误码和文案。</li>
+            <li><strong>离线可用：</strong> 不依赖网络、CDN、在线字体或云服务。</li>
+            <li><strong>跨平台：</strong> Windows 10/11 与 RHEL 8 / Ubuntu 桌面。</li>
+            <li><strong>可回退：</strong> GUI 出问题时，用户仍可继续使用现有 CLI。</li>
+            <li><strong>可测试：</strong> 状态、事件、关键页面都有自动化测试。</li>
+          </ul>
+        </div>
+        <div class="panel">
+          <h4>非目标（v1 明确不做）</h4>
+          <ul>
+            <li>不做移动端、远程 Web 控制台或多人协作。</li>
+            <li>不重构二维码编码、压缩、校验算法。</li>
+            <li>不做多任务并行传输；v1 一次只跑一个任务，但保留队列接口。</li>
+            <li>不做账号体系、云端同步、自动更新。</li>
+            <li>不把静态 PNG 的 <code>encode/decode</code> 塞进首批页面；后续可加独立页签。</li>
+            <li>不在 v1 强制把全屏播放器迁移到 Qt；先保留独立进程方案。</li>
+          </ul>
+        </div>
+      </div>
+    </section>
+
+    <!-- ============================================================ 4 -->
+    <section id="users">
+      <p class="section-kicker">04 · Users & Scenarios</p>
+      <h2>用户与场景</h2>
+
+      <div class="grid-3">
+        <div class="mini"><b>交付 / 运维工程师</b><span>在 RHEL 8 上打包软件，通过 VNC 传到 Windows 接收机。关注成功率、速度和可解释的失败原因。</span></div>
+        <div class="mini"><b>隔离环境管理员</b><span>没有网络、不能插 U 盘，只能看屏幕。需要稳定、可审计、不会误操作的数据通道。</span></div>
+        <div class="mini"><b>偶尔使用的研发</b><span>几个月用一次，记不住参数。需要默认值合理、流程向导化、路径能记住。</span></div>
+      </div>
+
+      <div class="tbl-wrap" style="margin-top:16px">
+        <table>
+          <thead><tr><th style="width:20%">场景</th><th style="width:34%">用户路径</th><th style="width:23%">痛点</th><th style="width:23%">UI 支持</th></tr></thead>
+          <tbody>
+            <tr>
+              <td>首次传输 10 MB 目录</td>
+              <td>发送机器选目录 → 默认 fast → 播放；接收机器选目录 → 自动找窗口 → 接收</td>
+              <td>不知道选哪个模式、不知道要等多久</td>
+              <td>默认值 + 预估时间 + 进度环 + 分片热力图</td>
+            </tr>
+            <tr>
+              <td>远端画面被缩放</td>
+              <td>接收机器识别率低</td>
+              <td>不知道该改发送机器还是接收机器、改哪个参数</td>
+              <td>错误卡片直接建议“两边加 --safe”，一键重开</td>
+            </tr>
+            <tr>
+              <td>长文件漏片</td>
+              <td>接收机器显示缺 37 片</td>
+              <td>复制范围、切窗口、重启播放器很麻烦</td>
+              <td>缺片列表 + 一键复制 + 播放区间弹窗 + 只播相关页</td>
+            </tr>
+            <tr>
+              <td>手机拍屏</td>
+              <td>发送机器选 camera 模式</td>
+              <td>参数组合复杂、拍歪了没提示</td>
+              <td>模式卡片说明适用场景；结束后提示拍正</td>
+            </tr>
+            <tr>
+              <td>失败诊断</td>
+              <td>“一帧都没解出来”</td>
+              <td>日志太长，不知道从哪查</td>
+              <td>诊断页：抓屏后端、窗口、分辨率、最近错误</td>
+            </tr>
+            <tr>
+              <td>重复传输</td>
+              <td>每天传同一批目录</td>
+              <td>每次重新选路径和参数</td>
+              <td>最近任务、最近路径、记住上次模式</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <!-- ============================================================ 5 -->
+    <section id="principles">
+      <p class="section-kicker">05 · Principles</p>
+      <h2>设计原则</h2>
+      <div class="grid-2">
+        <div class="panel">
+          <h4><span class="num-badge">01</span>角色先行</h4>
+          <p>第一屏不问参数，只问“这台机器是发送机器还是接收机器”。角色决定后续页面、默认值和可用的诊断项。</p>
+
+          <h4 style="margin-top:22px"><span class="num-badge">02</span>一条主线</h4>
+          <p>发送和接收各是一条向导式主线：选择内容 → 设置 → 运行 → 完成。高级参数折叠，不打断主线。</p>
+
+          <h4 style="margin-top:22px"><span class="num-badge">03</span>状态可见</h4>
+          <p>用状态机驱动界面。每个状态都有明确的标题、颜色、可执行动作，不靠用户从日志里猜。</p>
+
+          <h4 style="margin-top:22px"><span class="num-badge">04</span>错误可行动</h4>
+          <p>错误卡片最多给三个动作：重试、改设置、打开诊断。原始堆栈放在“详情”里，不默认展示。</p>
+        </div>
+        <div class="panel">
+          <h4><span class="num-badge">05</span>渐进披露</h4>
+          <p>默认只显示最常改的 2–3 个选项；帧率、模块像素、压缩器、采集后端放进“高级”。</p>
+
+          <h4 style="margin-top:22px"><span class="num-badge">06</span>离线优先</h4>
+          <p>所有资源内置，不引用 CDN、在线字体或远程接口。UI 在完全断网的机器上必须完整可用。</p>
+
+          <h4 style="margin-top:22px"><span class="num-badge">07</span>键盘可用</h4>
+          <p>Tab 遍历、Enter 主操作、Esc 返回/结束、空格暂停。全屏播放器保留现有快捷键。</p>
+
+          <h4 style="margin-top:22px"><span class="num-badge">08</span>与 CLI 同源</h4>
+          <p>GUI 与 CLI 共用核心服务、事件、错误码和文案。GUI 不是第二套实现。</p>
+        </div>
+      </div>
+    </section>
+
+    <!-- ============================================================ 6 -->
+    <section id="ia">
+      <p class="section-kicker">06 · Information Architecture</p>
+      <h2>信息架构</h2>
+      <p class="lede">
+        一级导航只保留“任务”和“工具”，不再把发送/接收当成同级 Tab。
+        播放区间不是独立入口，而是发送/接收监控中的上下文操作，同时保留独立页面供高级用户直接打开。
+      </p>
+
+      <div class="panel">
+        <div class="flow" style="align-items:flex-start">
+          <div class="flow-node hi">首页</div>
+          <div class="flow-arrow">→</div>
+          <div>
+            <div class="flow-node">发送</div>
+            <div class="small-list" style="margin:6px 0 0 12px">选择内容 · 播放设置 · 播放监控 · 完成</div>
+          </div>
+          <div class="flow-arrow">→</div>
+          <div>
+            <div class="flow-node">接收</div>
+            <div class="small-list" style="margin:6px 0 0 12px">保存位置 · 采集设置 · 接收监控 · 校验完成</div>
+          </div>
+        </div>
+        <div class="flow" style="margin-top:10px">
+          <div class="flow-node">播放区间</div>
+          <span class="flow-label">可从发送/接收监控直接打开，也可独立进入</span>
+        </div>
+        <div class="flow" style="margin-top:10px">
+          <div class="flow-node">诊断</div>
+          <span class="flow-label">环境检查 · 抓屏后端 · 最近错误 · 导出日志</span>
+          <div class="flow-arrow">·</div>
+          <div class="flow-node">设置</div>
+          <span class="flow-label">默认参数 · 主题 · 语言 · 高级</span>
+        </div>
+      </div>
+
+      <h3>页面清单</h3>
+      <div class="tbl-wrap">
+        <table>
+          <thead><tr><th>页面</th><th>优先级</th><th>核心内容</th><th>主要动作</th></tr></thead>
+          <tbody>
+            <tr><td>首页 / 角色选择</td><td><span class="chip err">P0</span></td><td>发送/接收角色卡、最近任务、环境状态</td><td>进入发送、进入接收、打开诊断</td></tr>
+            <tr><td>发送设置</td><td><span class="chip err">P0</span></td><td>路径、模式、自动退出、高级参数</td><td>开始播放、返回</td></tr>
+            <tr><td>发送监控</td><td><span class="chip err">P0</span></td><td>进度、分片热力图、QR 预览、区间输入</td><td>暂停、停止、应用区间</td></tr>
+            <tr><td>接收设置</td><td><span class="chip err">P0</span></td><td>输出目录、窗口/区域、稳健模式</td><td>开始接收、返回</td></tr>
+            <tr><td>接收监控</td><td><span class="chip err">P0</span></td><td>进度、缺片、热力图、截图预览</td><td>复制缺片、应用区间、停止</td></tr>
+            <tr><td>播放区间</td><td><span class="chip warn">P1</span></td><td>范围输入、解析预览、历史</td><td>应用、恢复全部、取消</td></tr>
+            <tr><td>完成 / 结果</td><td><span class="chip warn">P1</span></td><td>文件数、字节数、耗时、校验结果</td><td>打开目录、再传一次、返回首页</td></tr>
+            <tr><td>诊断</td><td><span class="chip warn">P1</span></td><td>环境卡片、日志、导出</td><td>重新检查、导出日志</td></tr>
+            <tr><td>设置</td><td><span class="chip info">P2</span></td><td>默认模式、时长、主题、语言</td><td>保存、恢复默认</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <!-- ============================================================ 7 -->
+    <section id="mockups">
+      <p class="section-kicker">07 · Mockups</p>
+      <h2>效果图</h2>
+      <p class="lede">
+        以下为高保真交互稿示意（HTML/CSS 渲染，非最终像素稿）。所有页面共享同一套侧栏、
+        卡片、状态色与 8px 间距体系；分辨率基准 1440×900，支持 125% / 150% 缩放。
+      </p>
+
+      <!-- ---------------------------------------------------------- 7.1 -->
+      <h3 id="m-home">7.1 首页 / 角色选择</h3>
+      <figure class="mock-figure">
+        <div class="mockup">
+          <div class="mock-bar"><span class="dot r"></span><span class="dot y"></span><span class="dot g"></span><span class="mock-title">qrfile — 首页</span></div>
+          <div class="mock-body">
+            <aside class="rail">
+              <div class="rail-brand"><span class="logo">q</span> qrfile</div>
+              <div class="nav-item active"><span class="ic">⌂</span>首页</div>
+              <div class="nav-item"><span class="ic">↗</span>发送</div>
+              <div class="nav-item"><span class="ic">↙</span>接收</div>
+              <div class="nav-item"><span class="ic">◫</span>播放区间</div>
+              <div class="nav-item"><span class="ic">⚙</span>诊断</div>
+              <div class="nav-spacer"></div>
+              <div class="nav-item"><span class="ic">☰</span>设置</div>
+              <div class="rail-foot">v0.7.0 · CLI 核心已就绪<br>离线模式 · 无外部依赖</div>
+            </aside>
+            <div class="screen-main">
+              <div class="screen-head">
+                <div>
+                  <h4>选择这台机器的角色</h4>
+                  <p>先确定发送 / 接收，再进入对应的传输流程。</p>
+                </div>
+                <span class="chip ok">● 环境正常</span>
+              </div>
+
+              <div class="role-grid">
+                <div class="role-card primary">
+                  <div class="role-top"><span class="role-icon">发</span><span class="chip info">发送机器</span></div>
+                  <h5>把文件播出去</h5>
+                  <p>选择文件或目录，全屏循环播放二维码。适合被隔离的那台机器。</p>
+                  <div class="role-meta">屏幕 3840×1440 · 12 码/屏 · 预计 3 分 20 秒</div>
+                  <div style="margin-top:8px"><span class="btn btn-primary">开始发送 →</span></div>
+                </div>
+                <div class="role-card">
+                  <div class="role-top"><span class="role-icon">收</span><span class="chip ok">接收机器</span></div>
+                  <h5>把文件收回来</h5>
+                  <p>自动定位远程桌面窗口，截屏、解码、校验并还原文件树。</p>
+                  <div class="role-meta">自动识别 · dxcam / mss · 收齐后自动还原</div>
+                  <div style="margin-top:8px"><span class="btn btn-ghost">开始接收 →</span></div>
+                </div>
+              </div>
+
+              <div class="home-grid">
+                <div class="card">
+                  <div class="card-title">最近任务</div>
+                  <div class="mini-row"><span class="chip ok">完成</span><span class="nm">/data/release-2026.11</span><span class="tm">今天 14:02</span></div>
+                  <div class="mini-row"><span class="chip warn">缺 37 片</span><span class="nm">D:\incoming\logs</span><span class="tm">昨天 18:40</span></div>
+                  <div class="mini-row"><span class="chip info">已停止</span><span class="nm">/data/drivers</span><span class="tm">11-05 09:12</span></div>
+                </div>
+                <div class="card">
+                  <div class="card-title">环境检查</div>
+                  <div class="check"><i>✓</i>图形界面与高 DPI</div>
+                  <div class="check"><i>✓</i>抓屏后端（dxcam）</div>
+                  <div class="check"><i>✓</i>压缩器（zlib / lzma）</div>
+                  <div class="check bad"><i>!</i><span>未检测到远程桌面窗口</span></div>
+                </div>
+              </div>
+
+              <div class="mock-footer">
+                <span class="hint">提示：双击 exe 默认进入此页；带参数启动仍走 CLI。</span>
+                <span class="btn btn-ghost sm">打开诊断</span>
+              </div>
+            </div>
+          </div>
+        </div>
+        <figcaption><b>图 1 · 角色首页。</b> 首屏只保留角色选择、最近任务和环境状态；发送/接收 卡片用颜色和图标区分，避免误操作。</figcaption>
+      </figure>
+      <div class="notes">
+        <div class="note"><b>角色优先</b><span>不要求用户理解参数，只需要知道“这台机器负责发还是收”。</span></div>
+        <div class="note"><b>最近任务</b><span>重复传输可一键继续；失败任务保留缺片状态，直接进入区间修复。</span></div>
+        <div class="note"><b>环境状态</b><span>把 doctor 的关键结论前置到首页，异常项可点击进入诊断。</span></div>
+      </div>
+
+      <!-- ---------------------------------------------------------- 7.2 -->
+      <h3 id="m-send">7.2 发送设置</h3>
+      <figure class="mock-figure">
+        <div class="mockup">
+          <div class="mock-bar"><span class="dot r"></span><span class="dot y"></span><span class="dot g"></span><span class="mock-title">qrfile — 发送 / 选择内容</span></div>
+          <div class="mock-body">
+            <aside class="rail">
+              <div class="rail-brand"><span class="logo">q</span> qrfile</div>
+              <div class="nav-item"><span class="ic">⌂</span>首页</div>
+              <div class="nav-item active"><span class="ic">↗</span>发送</div>
+              <div class="nav-item"><span class="ic">↙</span>接收</div>
+              <div class="nav-item"><span class="ic">◫</span>播放区间</div>
+              <div class="nav-item"><span class="ic">⚙</span>诊断</div>
+              <div class="nav-spacer"></div>
+              <div class="nav-item"><span class="ic">☰</span>设置</div>
+              <div class="rail-foot">发送机器 · RHEL 8<br>屏幕 3840×1440</div>
+            </aside>
+            <div class="screen-main">
+              <div class="steps">
+                <div class="step active"><span class="n">1</span>选择内容</div><span class="step-sep"></span>
+                <div class="step"><span class="n">2</span>播放设置</div><span class="step-sep"></span>
+                <div class="step"><span class="n">3</span>开始播放</div>
+              </div>
+
+              <div class="card">
+                <div class="card-title">要发送什么？</div>
+                <div class="dropzone">
+                  <b>拖入文件或目录，或点击选择</b>
+                  支持多选；目录会保留根目录、嵌套目录、空目录与符号链接
+                </div>
+                <div class="file-row"><span class="fi">DIR</span><span class="nm">/data/release-2026.11</span><span class="sz">184.2 MB · 1,204 个文件</span><span class="chip ok">已就绪</span></div>
+                <div class="file-row"><span class="fi">TXT</span><span class="nm">/data/README.md</span><span class="sz">12.4 KB</span><span class="chip">附加</span></div>
+                <div class="file-row"><span class="fi">BIN</span><span class="nm">/data/agent.rpm</span><span class="sz">96.8 MB</span><span class="chip">附加</span></div>
+              </div>
+
+              <div class="form-grid">
+                <div class="card">
+                  <div class="card-title">播放模式</div>
+                  <div class="radio-row">
+                    <div class="radio on"><span class="dot2"></span><span><b>快速</b><small>一屏多码 · 推荐</small></span></div>
+                    <div class="radio"><span class="dot2"></span><span><b>稳健</b><small>一屏一码 · 抗缩放</small></span></div>
+                    <div class="radio"><span class="dot2"></span><span><b>手机拍屏</b><small>ECC H · 抗拍歪</small></span></div>
+                  </div>
+                  <div style="margin-top:10px" class="field">
+                    <label>自动退出</label>
+                    <div class="input mono">1800 秒 <span style="color:#94a3b8;margin-left:auto">0 = 一直播放</span></div>
+                  </div>
+                </div>
+                <div class="card">
+                  <div class="card-title">预计结果</div>
+                  <div class="stat"><span>分片数</span><b>7,640 片</b></div>
+                  <div class="stat"><span>屏数</span><b>27 屏 / 轮</b></div>
+                  <div class="stat"><span>单轮耗时</span><b>约 5.4 秒</b></div>
+                  <div class="stat"><span>压缩后</span><b>184.2 → 117.7 MB</b></div>
+                </div>
+              </div>
+
+              <div class="mock-footer">
+                <div>
+                  <span class="btn btn-primary">开始播放 →</span>
+                  <span class="btn btn-ghost">高级设置</span>
+                </div>
+                <span class="hint">会话存档：~/.qrfile/session.json</span>
+              </div>
+            </div>
+          </div>
+        </div>
+        <figcaption><b>图 2 · 发送设置。</b> 内容选择、模式、预估结果在一屏内完成；高级参数折叠，不打断主流程。</figcaption>
+      </figure>
+      <div class="notes">
+        <div class="note"><b>拖拽 + 原生对话框</b><span>目录、文件都可直接拖入；路径错误在进入下一步前就被拦截。</span></div>
+        <div class="note"><b>预估而非术语</b><span>用户关心“要多久、多少屏”，而不是版本号、模块像素。</span></div>
+        <div class="note"><b>默认值可记忆</b><span>上次使用的模式、时长、目录写入设置，下次自动带出。</span></div>
+      </div>
+
+      <!-- ---------------------------------------------------------- 7.3 -->
+      <h3 id="m-monitor">7.3 发送监控</h3>
+      <figure class="mock-figure">
+        <div class="mockup">
+          <div class="mock-bar"><span class="dot r"></span><span class="dot y"></span><span class="dot g"></span><span class="mock-title">qrfile — 发送 / 播放中</span></div>
+          <div class="mock-body">
+            <aside class="rail">
+              <div class="rail-brand"><span class="logo">q</span> qrfile</div>
+              <div class="nav-item"><span class="ic">⌂</span>首页</div>
+              <div class="nav-item active"><span class="ic">↗</span>发送</div>
+              <div class="nav-item"><span class="ic">↙</span>接收</div>
+              <div class="nav-item"><span class="ic">◫</span>播放区间</div>
+              <div class="nav-item"><span class="ic">⚙</span>诊断</div>
+              <div class="nav-spacer"></div>
+              <div class="nav-item"><span class="ic">☰</span>设置</div>
+              <div class="rail-foot">会话 7d326a05<br>已播放 3 轮 · 16.2 秒</div>
+            </aside>
+            <div class="screen-main">
+              <div class="topbar">
+                <div class="screen-head" style="margin:0">
+                  <div><h4>正在播放 <span class="chip ok" style="vertical-align:middle">播放中</span></h4>
+                  <p>第 3/27 屏 · 分片 17–24/7,640 · 5.0 fps</p></div>
+                </div>
+                <div>
+                  <span class="btn btn-ghost sm">暂停</span>
+                  <span class="btn btn-danger sm">停止</span>
+                </div>
+              </div>
+
+              <div class="monitor-grid">
+                <div class="card ring-wrap">
+                  <div class="ring" style="--p:68"><div class="val">68%</div><div class="lbl">本轮进度</div></div>
+                  <div class="stat" style="width:100%"><span>已播放</span><b>5,195 / 7,640 片</b></div>
+                  <div class="stat" style="width:100%"><span>本轮剩余</span><b>1.7 秒</b></div>
+                  <div class="stat" style="width:100%"><span>实际帧率</span><b>5.0 fps</b></div>
+                </div>
+
+                <div class="card">
+                  <div class="card-title">分片覆盖热力图 <span class="chip info" style="margin-left:6px">发送机器视角</span></div>
+                  <div class="chunk-grid" data-chunks="192" data-missing="0"></div>
+                  <div class="legend">
+                    <span><i class="sw ok"></i>本轮已播放</span>
+                    <span><i class="sw miss"></i>待播放</span>
+                    <span><i class="sw dup"></i>—</span>
+                    <span style="margin-left:auto">每格 = 1 个分片</span>
+                  </div>
+                  <div class="callout" style="margin:10px 0 0;padding:8px 11px;font-size:10.5px">
+                    发送机器不需要知道接收机器缺什么；下方区间输入用于接收机器反馈后的补播。
+                  </div>
+                </div>
+
+                <div class="card" style="display:flex;flex-direction:column;gap:9px">
+                  <div class="card-title">当前画面</div>
+                  <div class="qr-preview"><canvas class="qr" width="232" height="232"></canvas></div>
+                  <div style="font-size:10px;color:#94a3b8;text-align:center;font-family:var(--mono)">v33-M · 4px · 12 码/屏</div>
+                  <div class="interval-box">
+                    <div class="lab">播放区间（可选）</div>
+                    <div class="input mono">12-18,204,900-905</div>
+                    <div style="display:flex;gap:6px;margin-top:6px">
+                      <span class="btn btn-primary sm" style="flex:1">应用</span>
+                      <span class="btn btn-ghost sm">全部</span>
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              <div class="event-strip">
+                <span class="t">14:02:11</span> <span class="ok">[播放]</span> 第 3 屏已渲染 · 8 个码 · 42 ms<br>
+                <span class="t">14:02:12</span> <span class="ok">[播放]</span> 第 4 屏已渲染 · 8 个码 · 39 ms<br>
+                <span class="t">14:02:13</span> <span class="w">[提示]</span> 接收机器请求区间 12-18,204,900-905<br>
+                <span class="t">14:02:13</span> <span class="ok">[播放]</span> 已切换为区间模式 · 共 6 页
+              </div>
+
+              <div class="mock-footer">
+                <span class="hint">全屏播放器在独立窗口中运行；主界面只负责监控与区间控制。</span>
+                <span class="chip">Esc 退出播放器</span>
+              </div>
+            </div>
+          </div>
+        </div>
+        <figcaption><b>图 3 · 发送监控。</b> 进度环回答“播到哪了”，热力图回答“哪些分片已经播过”，右下角直接接受缺片区间。</figcaption>
+      </figure>
+      <div class="notes">
+        <div class="note"><b>进度环 + 本轮</b><span>长文件以“轮”为单位更直观；同时显示分片级进度，避免误以为要等很久。</span></div>
+        <div class="note"><b>区间就地操作</b><span>接收机器报缺片后，不需要退出播放器；在监控页输入范围即可切换。</span></div>
+        <div class="note"><b>事件流而非日志</b><span>底部只保留结构化事件，可按级别过滤；原始日志在诊断页导出。</span></div>
+      </div>
+
+      <!-- ---------------------------------------------------------- 7.4 -->
+      <h3 id="m-receive">7.4 接收监控</h3>
+      <figure class="mock-figure">
+        <div class="mockup">
+          <div class="mock-bar"><span class="dot r"></span><span class="dot y"></span><span class="dot g"></span><span class="mock-title">qrfile — 接收 / 校验中</span></div>
+          <div class="mock-body">
+            <aside class="rail">
+              <div class="rail-brand"><span class="logo">q</span> qrfile</div>
+              <div class="nav-item"><span class="ic">⌂</span>首页</div>
+              <div class="nav-item"><span class="ic">↗</span>发送</div>
+              <div class="nav-item active"><span class="ic">↙</span>接收</div>
+              <div class="nav-item"><span class="ic">◫</span>播放区间</div>
+              <div class="nav-item"><span class="ic">⚙</span>诊断</div>
+              <div class="nav-spacer"></div>
+              <div class="nav-item"><span class="ic">☰</span>设置</div>
+              <div class="rail-foot">接收机器 · Windows 11<br>输出 D:\incoming\release</div>
+            </aside>
+            <div class="screen-main">
+              <div class="topbar">
+                <div class="screen-head" style="margin:0">
+                  <div><h4>正在接收 <span class="chip warn" style="vertical-align:middle">缺 37 片</span></h4>
+                  <p>已收 1,240 / 1,277 片 · 重复 18 · 坏帧 3</p></div>
+                </div>
+                <div>
+                  <span class="window-chip">窗口 <b>远程桌面连接</b> · 1280×720 <span class="chip info">自动</span></span>
+                  <span class="btn btn-ghost sm">更换窗口</span>
+                </div>
+              </div>
+
+              <div class="monitor-grid">
+                <div class="card ring-wrap">
+                  <div class="ring" style="--p:97"><div class="val">97%</div><div class="lbl">已接收分片</div></div>
+                  <div class="stat" style="width:100%"><span>总数</span><b>1,277 片</b></div>
+                  <div class="stat" style="width:100%"><span>缺失</span><b>37 片</b></div>
+                  <div class="stat" style="width:100%"><span>本轮帧率</span><b>8.0 fps</b></div>
+                </div>
+
+                <div class="card">
+                  <div class="card-title">分片覆盖热力图 <span class="chip warn" style="margin-left:6px">橙色 = 缺失</span></div>
+                  <div class="chunk-grid" data-chunks="192" data-missing="6"></div>
+                  <div class="legend">
+                    <span><i class="sw ok"></i>已接收</span>
+                    <span><i class="sw miss"></i>缺失</span>
+                    <span><i class="sw dup"></i>重复</span>
+                    <span style="margin-left:auto">点击橙色格子可查看分片号</span>
+                  </div>
+
+                  <div class="banner mono" style="margin-top:10px">
+                    <span class="grow">缺 37 片：12-18,204,900-905,1200-1222</span>
+                    <span class="btn btn-ghost sm">复制</span>
+                    <span class="btn btn-primary sm">应用播放区间</span>
+                  </div>
+                  <div class="callout info" style="margin-bottom:0;font-size:10.5px">
+                    一屏多码时会自动映射到整页：例如一屏 8 码，缺 12–14 只重播第 2 页。
+                  </div>
+                </div>
+
+                <div class="card" style="display:flex;flex-direction:column;gap:8px">
+                  <div class="card-title">采集预览</div>
+                  <div style="height:112px;border-radius:10px;border:1px solid #e3e9f1;background:
+                    linear-gradient(135deg,#0b1220,#123047);position:relative;overflow:hidden">
+                    <div style="position:absolute;left:14%;top:16%;width:72%;height:68%;background:
+                      repeating-conic-gradient(#e2e8f0 0 25%,#94a3b8 0 50%) 0 0/8px 8px;border-radius:6px;opacity:.85"></div>
+                    <div style="position:absolute;left:10%;top:8%;font:9px var(--mono);color:#7dd3fc">1920×1080 · 100%</div>
+                  </div>
+                  <div class="stat"><span>重复帧</span><b>18</b></div>
+                  <div class="stat"><span>坏帧</span><b>3</b></div>
+                  <div class="stat"><span>已用时间</span><b>02:41</b></div>
+                  <div style="margin-top:auto"><span class="btn btn-danger sm" style="width:100%">停止接收</span></div>
+                </div>
+              </div>
+
+              <div class="event-strip">
+                <span class="t">14:22:08</span> <span class="ok">[接收]</span> 自动定位窗口“远程桌面连接” · 已调到前台<br>
+                <span class="t">14:22:09</span> <span class="ok">[解码]</span> 8/8 个码 · 24 ms<br>
+                <span class="t">14:22:12</span> <span class="w">[缺片]</span> 37 片 · 复制范围或应用播放区间<br>
+                <span class="t">14:22:13</span> <span class="e">[警告]</span> 3 个坏帧 · CRC 校验失败（已忽略）
+              </div>
+
+              <div class="mock-footer">
+                <span class="hint">收齐后自动进入校验与还原；任何一项 SHA-256 不通过都不会写盘。</span>
+                <span class="chip info">校验中 · 0 文件已写</span>
+              </div>
+            </div>
+          </div>
+        </div>
+        <figcaption><b>图 4 · 接收监控。</b> 自动定位窗口、缺片范围、热力图和“应用播放区间”在同一屏；用户不需要切到发送机器手动抄数字。</figcaption>
+      </figure>
+      <div class="notes">
+        <div class="note"><b>缺片是主状态</b><span>橙色热力图 + 范围文本 + 一键动作，把“补片”从故障处理变成常规操作。</span></div>
+        <div class="note"><b>自动窗口可见</b><span>明确显示当前采集的是哪个窗口、分辨率多少，可一键更换。</span></div>
+        <div class="note"><b>校验前置</b><span>收齐后直接显示“校验中 / 已写 0 文件”，让用户知道还没有落盘。</span></div>
+      </div>
+
+      <!-- ---------------------------------------------------------- 7.5 -->
+      <h3 id="m-interval">7.5 播放区间</h3>
+      <figure class="mock-figure">
+        <div class="mockup" style="position:relative">
+          <div class="mock-bar"><span class="dot r"></span><span class="dot y"></span><span class="dot g"></span><span class="mock-title">qrfile — 播放区间</span></div>
+          <div style="position:relative;min-height:470px;background:#f7f9fc">
+            <div style="position:absolute;inset:0;background:#0f172a;opacity:.22"></div>
+            <div style="position:absolute;inset:0;display:grid;place-items:center;padding:24px">
+              <div class="card" style="width:min(560px,92%);padding:22px;box-shadow:0 26px 70px rgba(15,23,42,.28)">
+                <div style="display:flex;justify-content:space-between;align-items:flex-start">
+                  <div>
+                    <h4 style="font-size:17px;margin:0">播放区间</h4>
+                    <p style="margin:4px 0 0;font-size:11.5px;color:#7b8798">只循环缺失分片所在的页，不会重播整轮。</p>
+                  </div>
+                  <span class="chip info">会话 7d326a05</span>
+                </div>
+
+                <div class="field" style="margin-top:16px">
+                  <label>分片范围</label>
+                  <div class="input mono focus" style="font-size:13px;min-height:40px">12-18,204,900-905</div>
+                </div>
+
+                <div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:8px">
+                  <span class="chip">12-14</span>
+                  <span class="chip">204</span>
+                  <span class="chip">900-905</span>
+                  <span class="chip">最近一次缺片</span>
+                </div>
+
+                <div class="callout ok" style="margin:14px 0 0;font-size:11px">
+                  <b>解析结果</b>
+                  14 个分片 · 覆盖 5 页（第 2、3、26、113、114 页）· 约 1.0 秒/轮
+                </div>
+                <div class="callout warn" style="margin:8px 0 0;font-size:11px">
+                  <b>一屏多码自动适配</b>
+                  当前布局 8 码/屏，分片 12–14 在第 2 页；播放整页不会影响已接收的其他分片。
+                </div>
+
+                <div style="display:flex;justify-content:space-between;align-items:center;margin-top:18px">
+                  <span class="btn btn-ghost">恢复完整播放</span>
+                  <div>
+                    <span class="btn btn-ghost">取消</span>
+                    <span class="btn btn-primary">应用并播放</span>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+        <figcaption><b>图 5 · 播放区间弹窗。</b> 输入后立即给解析结果和页映射；错误范围在弹窗内提示，不会切换播放状态。</figcaption>
+      </figure>
+      <div class="notes">
+        <div class="note"><b>即时解析</b><span>边输入边校验，显示分片数、页数、预计单轮时长。</span></div>
+        <div class="note"><b>自动适配</b><span>按当前布局的 per_screen 映射整页；一屏多码无需用户关心。</span></div>
+        <div class="note"><b>安全恢复</b><span>“恢复完整播放”始终可用；输入无效时播放器保持原状态。</span></div>
+      </div>
+
+      <!-- ---------------------------------------------------------- 7.6 -->
+      <h3 id="m-diag">7.6 诊断与错误处理</h3>
+      <figure class="mock-figure">
+        <div class="mockup">
+          <div class="mock-bar"><span class="dot r"></span><span class="dot y"></span><span class="dot g"></span><span class="mock-title">qrfile — 诊断</span></div>
+          <div class="mock-body">
+            <aside class="rail">
+              <div class="rail-brand"><span class="logo">q</span> qrfile</div>
+              <div class="nav-item"><span class="ic">⌂</span>首页</div>
+              <div class="nav-item"><span class="ic">↗</span>发送</div>
+              <div class="nav-item"><span class="ic">↙</span>接收</div>
+              <div class="nav-item"><span class="ic">◫</span>播放区间</div>
+              <div class="nav-item active"><span class="ic">⚙</span>诊断</div>
+              <div class="nav-spacer"></div>
+              <div class="nav-item"><span class="ic">☰</span>设置</div>
+              <div class="rail-foot">最近错误 1 条<br>日志级别：普通</div>
+            </aside>
+            <div class="screen-main">
+              <div class="screen-head">
+                <div><h4>环境诊断</h4><p>检查播放、抓屏、解码、压缩能力；异常项给出直接动作。</p></div>
+                <span class="btn btn-primary sm">重新检查</span>
+              </div>
+
+              <div class="grid-3">
+                <div class="card">
+                  <div class="card-title">图形与显示</div>
+                  <div class="check"><i>✓</i>Qt 6.7 / 高 DPI 可用</div>
+                  <div class="check"><i>✓</i>字体与主题加载正常</div>
+                  <div class="check"><i>✓</i>1440×900 · 100%</div>
+                </div>
+                <div class="card">
+                  <div class="card-title">采集后端</div>
+                  <div class="check"><i>✓</i>dxcam（DXGI）优先</div>
+                  <div class="check"><i>✓</i>mss 回退可用</div>
+                  <div class="check bad"><i>!</i><span>未找到远程桌面窗口</span></div>
+                </div>
+                <div class="card">
+                  <div class="card-title">压缩与解码</div>
+                  <div class="check"><i>✓</i>zlib / lzma</div>
+                  <div class="check"><i>✓</i>zxing-cpp 3.1</div>
+                  <div class="check"><i>✓</i>reedsolo</div>
+                </div>
+              </div>
+
+              <div class="card">
+                <div class="card-title">最近错误 <span class="chip err" style="margin-left:6px">需要处理</span></div>
+                <div class="callout danger" style="margin:0">
+                  <b>一帧都没有解出来</b>
+                  <p style="margin:2px 0 8px;font-size:11.5px">
+                    采集区域里没有检测到二维码。最常见原因是远程桌面窗口被缩放，或窗口没有在前台。
+                  </p>
+                  <div style="display:flex;gap:6px;flex-wrap:wrap">
+                    <span class="btn btn-primary sm">自动重新定位窗口</span>
+                    <span class="btn btn-ghost sm">手动选择窗口</span>
+                    <span class="btn btn-ghost sm">两边都开稳健模式</span>
+                  </div>
+                  <details style="margin-top:8px;font-size:10.5px;color:#7b8798">
+                    <summary>查看技术详情</summary>
+                    采集区域 (0,0,1920,1080)；后端 dxcam；首帧亮度极差 3；解码尝试 12 次。
+                  </details>
+                </div>
+              </div>
+
+              <div class="event-strip" style="max-height:70px">
+                <span class="t">14:31:02</span> <span class="ok">[诊断]</span> doctor 完成 · 12 项通过 / 1 项警告<br>
+                <span class="t">14:31:02</span> <span class="w">[窗口]</span> guess_remote_window 未匹配到 VNC / RDP 标题<br>
+                <span class="t">14:30:58</span> <span class="e">[错误]</span> pull 启动后 5 秒内 0 帧解码
+              </div>
+
+              <div class="mock-footer">
+                <span class="hint">日志默认不显示堆栈；导出时包含完整诊断信息，便于排查。</span>
+                <span class="btn btn-ghost sm">导出诊断包</span>
+              </div>
+            </div>
+          </div>
+        </div>
+        <figcaption><b>图 6 · 诊断与错误卡片。</b> 错误先说人话，再给三个可执行动作；技术细节折叠，避免吓到普通用户。</figcaption>
+      </figure>
+      <div class="notes">
+        <div class="note"><b>动作导向</b><span>每个错误最多三个动作，直接调用现有能力，不让用户去查文档。</span></div>
+        <div class="note"><b>环境卡片化</b><span>把 doctor 的文本输出变成可扫读的通过/警告/失败卡片。</span></div>
+        <div class="note"><b>可导出</b><span>一键打包日志、配置、环境信息，方便远程支持。</span></div>
+      </div>
+    </section>
+
+    <!-- ============================================================ 8 -->
+    <section id="flows">
+      <p class="section-kicker">08 · Flows</p>
+      <h2>核心流程</h2>
+
+      <h3>发送流程</h3>
+      <div class="flow">
+        <div class="flow-node hi">选择内容</div><span class="flow-arrow">→</span>
+        <div class="flow-node">播放设置</div><span class="flow-arrow">→</span>
+        <div class="flow-node">压缩 / 分片</div><span class="flow-arrow">→</span>
+        <div class="flow-node">全屏播放</div><span class="flow-arrow">→</span>
+        <div class="flow-node">监控 / 区间</div><span class="flow-arrow">→</span>
+        <div class="flow-node">完成</div>
+      </div>
+
+      <h3>接收流程</h3>
+      <div class="flow">
+        <div class="flow-node hi">选择保存位置</div><span class="flow-arrow">→</span>
+        <div class="flow-node">定位窗口</div><span class="flow-arrow">→</span>
+        <div class="flow-node">采集解码</div><span class="flow-arrow">→</span>
+        <div class="flow-node">缺片提示</div><span class="flow-arrow">→</span>
+        <div class="flow-node">校验 / 还原</div><span class="flow-arrow">→</span>
+        <div class="flow-node">完成</div>
+      </div>
+
+      <h3>缺片修复流程</h3>
+      <div class="flow">
+        <div class="flow-node hi">接收机器发现缺片</div><span class="flow-arrow">→</span>
+        <div class="flow-node">生成范围文本</div><span class="flow-arrow">→</span>
+        <div class="flow-node">发送机器应用区间</div><span class="flow-arrow">→</span>
+        <div class="flow-node">按页映射</div><span class="flow-arrow">→</span>
+        <div class="flow-node">只播相关页</div><span class="flow-arrow">→</span>
+        <div class="flow-node">接收机器收齐</div>
+      </div>
+
+      <h3>任务状态机</h3>
+      <div class="tbl-wrap">
+        <table>
+          <thead><tr><th>状态</th><th>含义</th><th>允许动作</th><th>UI 表现</th></tr></thead>
+          <tbody>
+            <tr><td><code>Idle</code></td><td>没有任务</td><td>开始发送/接收</td><td>首页、设置可操作</td></tr>
+            <tr><td><code>Preparing</code></td><td>扫描、压缩、构建会话</td><td>取消</td><td>进度条 + “正在准备…”</td></tr>
+            <tr><td><code>Ready</code></td><td>分片已就绪，等待播放/采集</td><td>开始、返回</td><td>预估结果卡片</td></tr>
+            <tr><td><code>Playing</code></td><td>发送机器播放中</td><td>暂停、停止、应用区间</td><td>进度环 + 热力图</td></tr>
+            <tr><td><code>Receiving</code></td><td>接收机器采集中</td><td>停止、应用区间</td><td>进度环 + 缺片横幅</td></tr>
+            <tr><td><code>WaitingForChunks</code></td><td>接收机器等待补片</td><td>复制范围、切换窗口</td><td>橙色缺片状态</td></tr>
+            <tr><td><code>Verifying</code></td><td>校验 SHA-256 / archive_sha256</td><td>取消（不写盘）</td><td>校验进度 + 写盘计数 0</td></tr>
+            <tr><td><code>Restoring</code></td><td>还原文件树</td><td>—</td><td>文件列表滚动</td></tr>
+            <tr><td><code>Completed</code></td><td>成功</td><td>打开目录、再传一次</td><td>摘要 + 绿色状态</td></tr>
+            <tr><td><code>Failed</code> / <code>Cancelled</code></td><td>失败或用户停止</td><td>重试、诊断、返回</td><td>错误卡片 / 中性结束</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <!-- ============================================================ 9 -->
+    <section id="tech">
+      <p class="section-kicker">09 · Technology</p>
+      <h2>技术选型</h2>
+      <p class="lede">
+        UI 技术栈的决定会直接影响包体、RHEL 8 兼容性和开发速度。建议先做 2–3 天的
+        打包 Spike，再锁定方案；默认推荐 Qt，但保留 tkinter 重设计的回退路径。
+      </p>
+
+      <div class="tbl-wrap">
+        <table>
+          <thead>
+            <tr><th style="width:16%">方案</th><th style="width:14%">UI 能力</th><th style="width:12%">包体增量</th><th style="width:16%">RHEL 8 / 离线</th><th style="width:16%">文件对话框 / 拖拽</th><th style="width:12%">风险</th><th style="width:14%">结论</th></tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td><b>tkinter / ttk</b><br><small>现状</small></td>
+              <td>★★☆☆☆</td>
+              <td>+0</td>
+              <td>好；系统自带</td>
+              <td>一般；需自行封装</td>
+              <td>低</td>
+              <td>回退方案</td>
+            </tr>
+            <tr class="recommend">
+              <td><b>PySide6 / Qt 6 LTS</b><br><small>推荐</small></td>
+              <td>★★★★★</td>
+              <td>+120–180 MB<br><small>可用 onedir 缓解</small></td>
+              <td>需验证 glibc 2.28；可打包</td>
+              <td>原生、拖拽完善</td>
+              <td>中</td>
+              <td><span class="chip ok">首选</span></td>
+            </tr>
+            <tr>
+              <td><b>本地 Web UI</b><br><small>stdlib + 浏览器</small></td>
+              <td>★★★★★</td>
+              <td>+5–15 MB</td>
+              <td>好；依赖浏览器</td>
+              <td>目录选择需服务端浏览</td>
+              <td>中高</td>
+              <td>备选</td>
+            </tr>
+            <tr>
+              <td><b>pywebview</b></td>
+              <td>★★★★☆</td>
+              <td>+系统 WebView</td>
+              <td>依赖系统组件</td>
+              <td>较好</td>
+              <td>中高</td>
+              <td>不推荐</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+
+      <div class="grid-2" style="margin-top:16px">
+        <div class="panel">
+          <h4>为什么推荐 PySide6</h4>
+          <ul>
+            <li>原生控件、成熟的布局系统、高 DPI 支持，能直接实现本报告的效果图。</li>
+            <li>文件对话框、拖拽、进度条、表格、主题、键盘导航开箱即用。</li>
+            <li>LGPL 许可，与 MIT 项目兼容；Qt 6 LTS 维护周期长。</li>
+            <li>全屏播放器后续可迁移到 Qt，去掉 tkinter 依赖，统一事件循环。</li>
+            <li>可用 <code>QT_QPA_PLATFORM=offscreen</code> 做无头 UI 测试。</li>
+          </ul>
+        </div>
+        <div class="panel">
+          <h4>风险与前置验证（Phase 0）</h4>
+          <ul>
+            <li><strong>RHEL 8：</strong> 用 PySide6 6.5+ manylinux_2_28 wheel + PyInstaller 打包，检查 glibc、字体、X11 插件。</li>
+            <li><strong>Windows 11：</strong> 检查 125% / 150% DPI、深色主题、任务栏图标、窗口最大化。</li>
+            <li><strong>包体：</strong> 记录 onefile / onedir 体积和启动时间；必要时裁剪 Qt 模块。</li>
+            <li><strong>回退：</strong> 若 Spike 失败，降级为 ttk 重设计（保留本报告的 IA 与流程，降低视觉目标）。</li>
+          </ul>
+        </div>
+      </div>
+
+      <div class="callout warn">
+        <b>决策门槛</b>
+        Phase 0 必须在真实 RHEL 8 和 Windows 11 上各跑通一次：启动、中文显示、文件对话框、
+        全屏窗口、抓屏、打包产物自检。任一项失败则切换到回退方案，避免在中期才发现不可交付。
+      </div>
+    </section>
+
+    <!-- ============================================================ 10 -->
+    <section id="architecture">
+      <p class="section-kicker">10 · Architecture</p>
+      <h2>系统架构</h2>
+      <p class="lede">
+        关键改动是新增<strong>应用层</strong>：把“任务状态、进度、缺片、错误”变成结构化事件，
+        UI 和 CLI 都成为事件的消费者。这样 UI 不再解析日志，CLI 也能输出更稳定的机器可读格式。
+      </p>
+
+      <div class="panel">
+        <div class="flow" style="align-items:stretch">
+          <div class="flow-node hi" style="min-width:130px;text-align:center">UI Shell<br><small>Qt 页面 / 组件</small></div>
+          <div class="flow-arrow">⇅</div>
+          <div class="flow-node" style="min-width:170px;text-align:center">Application<br><small>TransferService · StateMachine · EventBus</small></div>
+          <div class="flow-arrow">⇅</div>
+          <div class="flow-node" style="min-width:150px;text-align:center">Core<br><small>archive · chunk · decode · restore</small></div>
+          <div class="flow-arrow">⇅</div>
+          <div class="flow-node" style="min-width:140px;text-align:center">Platform<br><small>Player · capture · compressors</small></div>
+        </div>
+      </div>
+
+      <h3>事件模型</h3>
+      <div class="tbl-wrap">
+        <table>
+          <thead><tr><th>事件</th><th>载荷</th><th>UI 用途</th></tr></thead>
+          <tbody>
+            <tr><td><code>StateChanged</code></td><td><code>from</code>, <code>to</code>, <code>reason</code></td><td>切换页面、按钮状态、状态色</td></tr>
+            <tr><td><code>Progress</code></td><td><code>received</code>, <code>total</code>, <code>round</code>, <code>fps</code></td><td>进度环、本轮剩余</td></tr>
+            <tr><td><code>ChunkReceived</code></td><td><code>indices[]</code></td><td>热力图增量更新</td></tr>
+            <tr><td><code>MissingChunks</code></td><td><code>indices[]</code>, <code>ranges</code></td><td>缺片横幅、一键复制</td></tr>
+            <tr><td><code>PageChanged</code></td><td><code>page</code>, <code>total_pages</code></td><td>发送机器当前屏、QR 预览</td></tr>
+            <tr><td><code>Warning</code></td><td><code>code</code>, <code>message</code>, <code>hint</code></td><td>事件流、非阻断提示</td></tr>
+            <tr><td><code>Error</code></td><td><code>code</code>, <code>message</code>, <code>actions[]</code>, <code>detail</code></td><td>错误卡片、诊断入口</td></tr>
+            <tr><td><code>Completed</code></td><td><code>files</code>, <code>bytes</code>, <code>elapsed</code>, <code>verified</code></td><td>完成页摘要</td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <pre><code>{
+  "type": "MissingChunks",
+  "session": "7d326a05",
+  "indices": [12, 13, 14, 204, 900],
+  "ranges": "12-14,204,900",
+  "total": 1277,
+  "received": 1240
+}</code></pre>
+
+      <h3>进程模型（分阶段）</h3>
+      <div class="grid-2">
+        <div class="mini">
+          <b>Phase 1 · 低风险</b>
+          <span>主界面 Qt 进程；发送播放器仍为 tkinter 子进程，通过 NDJSON 事件回流；接收逻辑可直接在 Qt 应用内运行（无全屏窗口冲突）。</span>
+        </div>
+        <div class="mini">
+          <b>Phase 2 · 统一</b>
+          <span>将全屏播放器迁移到 Qt（QWidget + QImage），去掉 tkinter 依赖；同一事件循环，支持暂停、区间切换、快捷键。</span>
+        </div>
+      </div>
+
+      <h3>代码组织</h3>
+      <pre><code>qrfile/
+├─ ui/                      # 新增：Qt 界面
+│  ├─ app.py                # QApplication / 入口
+│  ├─ main_window.py        # 侧栏、路由、状态栏
+│  ├─ pages/
+│  │  ├─ home.py
+│  │  ├─ send.py
+│  │  ├─ receive.py
+│  │  ├─ interval.py
+│  │  ├─ diagnostics.py
+│  │  └─ settings.py
+│  ├─ widgets/
+│  │  ├─ chunk_map.py       # 分片热力图
+│  │  ├─ progress_ring.py
+│  │  ├─ qr_preview.py
+│  │  └─ error_card.py
+│  └─ theme/
+│     ├─ tokens.py
+│     └─ styles.qss
+├─ core/
+│  ├─ events.py             # TransferEvent 数据类
+│  ├─ state.py              # 状态机
+│  ├─ jobs.py               # SendJob / ReceiveJob
+│  └─ event_bus.py
+├─ cli.py                   # 薄适配层：事件 → 文本
+├─ live_cli.py              # 现有 CLI 命令
+└─ player.py                # Phase 1 继续使用，Phase 2 迁移
+</code></pre>
+
+      <h3>打包策略</h3>
+      <ul>
+        <li><strong>两个入口：</strong> <code>qrfile</code>（console，保留 CLI）与 <code>qrfile-gui</code>（windowed，双击无黑窗）。</li>
+        <li><strong>共享核心：</strong> 两个入口打包同一份 <code>qrfile</code> 包，避免逻辑分叉。</li>
+        <li><strong>体积策略：</strong> 默认 onefile 便于分发；提供 <code>--onedir</code> 给启动速度和体积敏感场景。</li>
+        <li><strong>离线依赖：</strong> Qt 插件、字体、图标全部内置；不引用外部 CDN。</li>
+        <li><strong>兼容性：</strong> 在目标发行版或更老的发行版构建，记录 glibc 基线。</li>
+      </ul>
+    </section>
+
+    <!-- ============================================================ 11 -->
+    <section id="plan">
+      <p class="section-kicker">11 · Milestones</p>
+      <h2>里程碑与排期</h2>
+      <p class="lede">
+        按单人全职估算，约 32–37 人日。每个里程碑都有可演示产物和验收标准；
+        M0 是硬性决策门槛，未通过则切换技术方案，不进入 M1。
+      </p>
+
+      <div class="timeline">
+        <div class="tl-label">M0 选型 Spike</div>
+        <div class="tl-track"><div class="tl-bar gate" style="left:0%;width:8%">3d · 决策</div></div>
+        <div class="tl-label">M1 核心事件层</div>
+        <div class="tl-track"><div class="tl-bar" style="left:8%;width:14%">5d</div></div>
+        <div class="tl-label">M2 UI 框架</div>
+        <div class="tl-track"><div class="tl-bar" style="left:22%;width:12%">4d</div></div>
+        <div class="tl-label">M3 发送流程</div>
+        <div class="tl-track"><div class="tl-bar" style="left:34%;width:18%">7d</div></div>
+        <div class="tl-label">M4 接收流程</div>
+        <div class="tl-track"><div class="tl-bar" style="left:52%;width:18%">7d</div></div>
+        <div class="tl-label">M5 区间/诊断</div>
+        <div class="tl-track"><div class="tl-bar solid" style="left:70%;width:12%">4d</div></div>
+        <div class="tl-label">M6 打包/测试</div>
+        <div class="tl-track"><div class="tl-bar solid" style="left:82%;width:15%">5d</div></div>
+      </div>
+
+      <div class="tbl-wrap" style="margin-top:18px">
+        <table>
+          <thead><tr><th style="width:18%">里程碑</th><th style="width:12%">估算</th><th style="width:38%">交付物</th><th style="width:32%">验收标准</th></tr></thead>
+          <tbody>
+            <tr>
+              <td><b>M0 选型 Spike</b></td><td>2–3d</td>
+              <td>PySide6 在 RHEL 8 / Win11 的打包 demo；体积、启动、DPI、字体记录</td>
+              <td>能启动、中文正常、原生文件对话框可用、全屏窗口可显示；否则切换回退方案</td>
+            </tr>
+            <tr>
+              <td><b>M1 核心事件层</b></td><td>5d</td>
+              <td><code>events.py</code>、<code>state.py</code>、<code>jobs.py</code>；CLI 适配，保持输出兼容</td>
+              <td>状态机单测覆盖全部转移；CLI 回归测试全过；事件可序列化为 NDJSON</td>
+            </tr>
+            <tr>
+              <td><b>M2 UI 框架</b></td><td>4d</td>
+              <td>主窗口、侧栏、路由、主题令牌、设置持久化、首页骨架</td>
+              <td>三档 DPI 无错位；键盘可遍历；窗口缩放不破版</td>
+            </tr>
+            <tr>
+              <td><b>M3 发送流程</b></td><td>7d</td>
+              <td>内容选择、播放设置、发送监控、热力图、QR 预览、播放器子进程接入</td>
+              <td>10 MB 目录端到端成功；进度与热力图准确；停止/重开无残留</td>
+            </tr>
+            <tr>
+              <td><b>M4 接收流程</b></td><td>7d</td>
+              <td>接收设置、自动窗口、接收监控、缺片展示、截图预览、完成页</td>
+              <td>录屏/实机端到端还原；缺片数据与核心一致；校验失败不写盘</td>
+            </tr>
+            <tr>
+              <td><b>M5 区间/诊断</b></td><td>4d</td>
+              <td>播放区间弹窗、诊断页、错误卡片、日志导出、设置页</td>
+              <td>区间映射一屏多码正确；错误动作可直达；导出包可复现问题</td>
+            </tr>
+            <tr>
+              <td><b>M6 打包/测试</b></td><td>5d</td>
+              <td>Windows / Linux 构建、两个入口、安装说明、测试报告、截图回归基线</td>
+              <td>目标机自检通过；无 Python 环境可运行；文档与截图更新</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <!-- ============================================================ 12 -->
+    <section id="testing">
+      <p class="section-kicker">12 · Testing</p>
+      <h2>测试与验收</h2>
+
+      <div class="grid-2">
+        <div class="panel">
+          <h4>测试分层</h4>
+          <ul>
+            <li><strong>单元测试：</strong> 状态机、事件序列化、区间解析、参数校验、路径安全。</li>
+            <li><strong>组件测试：</strong> pytest-qt + <code>QT_QPA_PLATFORM=offscreen</code>，覆盖热力图、进度环、错误卡片。</li>
+            <li><strong>视觉回归：</strong> 关键页面在 100% / 125% / 150% 下截图比对，允许阈值内差异。</li>
+            <li><strong>端到端：</strong> 单机双进程（播放窗口 + 采集区域）或录屏帧序列，验证还原一致。</li>
+            <li><strong>跨平台：</strong> Windows 10/11、Ubuntu 24.04、RHEL 8；X11 与 Wayland 各跑一次。</li>
+            <li><strong>无障碍：</strong> 仅键盘完成发送/接收；高对比主题；控件有可读名称。</li>
+          </ul>
+        </div>
+        <div class="panel">
+          <h4>性能与体验预算</h4>
+          <ul>
+            <li>空闲 CPU &lt; 3%；进度更新 ≤ 10 Hz，避免 UI 抖动。</li>
+            <li>事件处理单次 &lt; 16 ms；热力图增量更新，不整页重绘。</li>
+            <li>主界面内存 &lt; 300 MB（不含播放器/解码缓存）。</li>
+            <li>从点击“开始播放”到全屏窗口出现 &lt; 1.5 秒。</li>
+            <li>接收机器停止后 2 秒内释放窗口/抓屏资源。</li>
+            <li>所有可交互控件支持 Tab 聚焦，焦点环清晰可见。</li>
+          </ul>
+        </div>
+      </div>
+
+      <div class="callout ok">
+        <b>Definition of Done</b>
+        功能完成 + 单元/组件测试通过 + 目标平台截图基线更新 + 文档更新 + 打包产物自检通过 +
+        在真实发送机器 / 接收机器上完成一次端到端传输。
+      </div>
+    </section>
+
+    <!-- ============================================================ 13 -->
+    <section id="risks">
+      <p class="section-kicker">13 · Risks</p>
+      <h2>风险与对策</h2>
+      <div class="tbl-wrap">
+        <table>
+          <thead><tr><th style="width:24%">风险</th><th style="width:10%">概率</th><th style="width:10%">影响</th><th style="width:56%">对策</th></tr></thead>
+          <tbody>
+            <tr><td>PySide6 在 RHEL 8 打包失败或依赖 glibc 过高</td><td>中</td><td>高</td><td>M0 先验证；失败则切换 ttk 重设计，IA 与流程不变，仅降低视觉目标</td></tr>
+            <tr><td>包体从 30 MB 增至 150–200 MB</td><td>高</td><td>中</td><td>提供 onedir 构建；裁剪 Qt 模块；在文档中说明体积与启动速度取舍</td></tr>
+            <tr><td>全屏播放器与主界面焦点冲突</td><td>中</td><td>高</td><td>Phase 1 保持播放器独立子进程；主界面不抢焦点；Esc/停止路径单独测试</td></tr>
+            <tr><td>接收时 GUI 自身被截入画面</td><td>中</td><td>中</td><td>接收页提供“最小化自身”选项；优先按窗口标题定位；整屏时把 GUI 移到副屏或最小化</td></tr>
+            <tr><td>高 DPI / 字体导致布局错位</td><td>中</td><td>中</td><td>Qt 高 DPI 策略 + 三档缩放截图回归；使用弹性布局，禁止固定像素宽度</td></tr>
+            <tr><td>事件层重构影响 CLI 行为</td><td>中</td><td>高</td><td>CLI 输出保持兼容；事件层先旁路接入；全量 CLI 回归测试作为门禁</td></tr>
+            <tr><td>UI 测试不稳定</td><td>中</td><td>中</td><td>offscreen + 固定数据；视觉回归允许阈值；E2E 使用录屏帧而非实时抓屏</td></tr>
+            <tr><td>范围蔓延到静态二维码 / 云功能</td><td>中</td><td>低</td><td>v1 明确非目标；新需求进入 backlog，按 P1/P2 排期</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <!-- ============================================================ 14 -->
+    <section id="decisions">
+      <p class="section-kicker">14 · Decisions</p>
+      <h2>待决策事项</h2>
+      <div class="grid-2">
+        <div class="panel">
+          <h4>需要评审确认</h4>
+          <ul>
+            <li><strong>目标平台优先级：</strong> 先 Windows 接收机器，还是先 RHEL 8 发送机器？建议先 Windows。</li>
+            <li><strong>技术栈：</strong> 是否接受 PySide6（包体 +120–180 MB）？若不接受，是否接受 ttk 的视觉上限？</li>
+            <li><strong>播放器迁移：</strong> v1 是否保持 tkinter 播放器子进程？建议保持，Phase 2 再迁移。</li>
+            <li><strong>打包形态：</strong> 两个入口（推荐）还是一个 exe 加参数？</li>
+            <li><strong>语言：</strong> v1 只做中文，还是同时预留英文资源？</li>
+          </ul>
+        </div>
+        <div class="panel">
+          <h4>建议的默认答案</h4>
+          <ul>
+            <li>先 Windows 11 接收机器，再 RHEL 8 发送机器。</li>
+            <li>采用 PySide6；M0 失败再回退 ttk。</li>
+            <li>v1 保留 tkinter 播放器子进程，Qt 只做控制台。</li>
+            <li>两个入口：<code>qrfile</code> + <code>qrfile-gui</code>。</li>
+            <li>中文优先，文案集中管理，预留 i18n 接口。</li>
+          </ul>
+        </div>
+      </div>
+    </section>
+
+    <!-- ============================================================ 15 -->
+    <section id="appendix">
+      <p class="section-kicker">15 · Appendix</p>
+      <h2>附录</h2>
+
+      <h3>设计令牌</h3>
+      <div class="grid-2">
+        <div class="panel">
+          <h4>颜色</h4>
+          <div class="kv">
+            <dt>主色 / 交互</dt><dd><code>#0B7FAB</code> · <code>#0EA5E9</code></dd>
+            <dt>成功</dt><dd><code>#0F9F6E</code> · 浅底 <code>#DCFCE7</code></dd>
+            <dt>警告 / 缺片</dt><dd><code>#B45309</code> · 浅底 <code>#FEF3C7</code></dd>
+            <dt>危险 / 错误</dt><dd><code>#B42318</code> · 浅底 <code>#FEE4E2</code></dd>
+            <dt>背景 / 卡片</dt><dd><code>#F3F6FB</code> / <code>#FFFFFF</code></dd>
+            <dt>正文 / 次要</dt><dd><code>#0F172A</code> / <code>#5F6B7C</code></dd>
+          </div>
+        </div>
+        <div class="panel">
+          <h4>字体与间距</h4>
+          <div class="kv">
+            <dt>界面字体</dt><dd>Inter / 苹方 / 微软雅黑 / Noto Sans CJK</dd>
+            <dt>等宽字体</dt><dd>JetBrains Mono / Consolas</dd>
+            <dt>字号</dt><dd>正文 13–15px · 标题 18–34px · 辅助 10–12px</dd>
+            <dt>间距</dt><dd>4 / 8 / 12 / 16 / 24 / 32（8px 基准）</dd>
+            <dt>圆角</dt><dd>控件 8–10px · 卡片 12–16px</dd>
+            <dt>阴影</dt><dd>卡片 0 10px 30px rgba(16,24,40,.05)</dd>
+          </div>
+        </div>
+      </div>
+
+      <h3>键盘快捷键</h3>
+      <div class="tbl-wrap">
+        <table>
+          <thead><tr><th>场景</th><th>快捷键</th><th>行为</th></tr></thead>
+          <tbody>
+            <tr><td>全局</td><td><code>Ctrl+1..5</code></td><td>切换首页 / 发送 / 接收 / 区间 / 诊断</td></tr>
+            <tr><td>向导</td><td><code>Enter</code> / <code>Esc</code></td><td>下一步 / 返回</td></tr>
+            <tr><td>播放器</td><td><code>空格</code></td><td>暂停 / 继续</td></tr>
+            <tr><td>播放器</td><td><code>Esc</code> / <code>q</code></td><td>退出播放器</td></tr>
+            <tr><td>播放器</td><td><code>↑</code> / <code>↓</code></td><td>调速</td></tr>
+            <tr><td>播放区间</td><td><code>Ctrl+Enter</code></td><td>应用并播放</td></tr>
+            <tr><td>日志</td><td><code>Ctrl+F</code></td><td>搜索事件</td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <h3>现有能力复用清单</h3>
+      <div class="tbl-wrap">
+        <table>
+          <thead><tr><th>现有模块</th><th>复用方式</th><th>改动量</th></tr></thead>
+          <tbody>
+            <tr><td><code>archive.py</code> / <code>chunk.py</code> / <code>manifest.py</code></td><td>核心不变，事件层包装</td><td>无</td></tr>
+            <tr><td><code>livelayout.py</code> / <code>render.py</code></td><td>布局与渲染不变；新增 QR 预览接口</td><td>小</td></tr>
+            <tr><td><code>capture.py</code> / <code>decode.py</code> / <code>receiver.py</code></td><td>接收核心不变；进度改为事件回调</td><td>中</td></tr>
+            <tr><td><code>player.py</code></td><td>Phase 1 作为子进程复用；Phase 2 迁移 Qt</td><td>小 / 大</td></tr>
+            <tr><td><code>live_cli.py</code></td><td>改为事件消费者，保持输出兼容</td><td>中</td></tr>
+            <tr><td><code>session.py</code></td><td>会话存档不变；UI 读取最近会话</td><td>小</td></tr>
+            <tr><td><code>packaging/</code></td><td>新增 GUI 入口与 Qt 依赖；保留 CLI 构建</td><td>中</td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <div class="callout info" style="margin-top:20px">
+        <b>本报告的边界</b>
+        这是交互与技术方案，不是最终视觉稿。确认技术栈后，下一步是 Figma / Qt Designer
+        级别的像素稿、组件状态表与可点击原型；本报告中的 HTML 效果图可直接作为视觉验收基准。
+      </div>
+    </section>
+
+  </main>
+</div>
+
+<footer class="foot">
+  qrfile UI 开发方案 · v1.0 · 2026-11-07 · 评审稿<br>
+  现有 CLI 与传输核心保持不变；本方案只重做界面层与事件层。
+</footer>
+
+<script>
+// 生成分片热力图（确定性伪随机，保证每次打开一致）
+document.querySelectorAll("[data-chunks]").forEach(function (el, gi) {
+  var total = parseInt(el.dataset.chunks, 10) || 192;
+  var missing = parseInt(el.dataset.missing, 10) || 0;
+  for (var i = 0; i < total; i++) {
+    var cell = document.createElement("i");
+    cell.className = "chunk";
+    var isMissing = ((i * 37 + 11 + gi * 5) % total) < missing;
+    if (isMissing) {
+      cell.className += " miss";
+      cell.title = "分片 " + i + "：缺失";
+    } else {
+      cell.title = "分片 " + i + "：已接收";
+    }
+    el.appendChild(cell);
+  }
+});
+
+// 生成示意二维码（三个定位角 + 伪随机模块）
+document.querySelectorAll("canvas.qr").forEach(function (canvas, ci) {
+  var ctx = canvas.getContext("2d");
+  var n = 29;
+  var s = canvas.width / n;
+  ctx.fillStyle = "#ffffff";
+  ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+  var seed = 97 + ci * 131;
+  function rnd() {
+    seed = (seed * 1103515245 + 12345) & 0x7fffffff;
+    return seed / 0x7fffffff;
+  }
+
+  function finder(ox, oy) {
+    ctx.fillStyle = "#0b1220";
+    ctx.fillRect(ox * s, oy * s, 7 * s, 7 * s);
+    ctx.fillStyle = "#ffffff";
+    ctx.fillRect((ox + 1) * s, (oy + 1) * s, 5 * s, 5 * s);
+    ctx.fillStyle = "#0b1220";
+    ctx.fillRect((ox + 2) * s, (oy + 2) * s, 3 * s, 3 * s);
+  }
+
+  var reserved = {};
+  function mark(ox, oy) {
+    for (var y = -1; y <= 7; y++) {
+      for (var x = -1; x <= 7; x++) {
+        var px = ox + x, py = oy + y;
+        if (px >= 0 && py >= 0 && px < n && py < n) reserved[py * n + px] = true;
+      }
+    }
+  }
+  mark(0, 0); mark(n - 7, 0); mark(0, n - 7);
+
+  ctx.fillStyle = "#0b1220";
+  for (var y = 0; y < n; y++) {
+    for (var x = 0; x < n; x++) {
+      if (reserved[y * n + x]) continue;
+      if (rnd() > 0.53) ctx.fillRect(x * s, y * s, s + 0.2, s + 0.2);
+    }
+  }
+  finder(0, 0); finder(n - 7, 0); finder(0, n - 7);
+
+  // 中心小标记，避免看起来完全随机
+  ctx.fillStyle = "#0b7fab";
+  ctx.fillRect(Math.floor(n / 2 - 2) * s, Math.floor(n / 2 - 2) * s, 4 * s, 4 * s);
+});
+</script>
+</body>
+</html>

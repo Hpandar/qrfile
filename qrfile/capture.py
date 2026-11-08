@@ -576,6 +576,15 @@ def _attempt_backend(name: str, region: Region | None) -> Image.Image:
     raise InputError(f"未知的采集后端：{name!r}")
 
 
+def is_wslg() -> bool:
+    """是否运行在 WSLg 下。
+
+    WSLg 的 Weston 既不支持 X11 的 XGetImage，也不支持 wlr-screencopy，
+    因此 Linux 进程无法录制 WSLg 桌面；需要改用 Windows 版接收端。
+    """
+    return bool(os.environ.get("WSL_DISTRO_NAME")) or os.path.isdir("/mnt/wslg")
+
+
 def grab(region: Region | None, *, backend: str = "auto") -> Image.Image:
     """抓一帧。``region=None`` 时抓整个虚拟屏（多显示器也算）。
 
@@ -617,11 +626,18 @@ def grab(region: Region | None, *, backend: str = "auto") -> Image.Image:
                 _MSS_SESSION = None  # 句柄可能失效，下次重建
             errors.append(f"{name}: {exc}")
 
-    raise InputError(
+    message = (
         f"抓屏失败（{'；'.join(errors)}）。"
         "Windows 请确认不在锁屏 / UAC 安全桌面；"
         "Linux 请确认 DISPLAY/WAYLAND_DISPLAY 正常，或安装 mss / grim / scrot。"
     )
+    if is_wslg():
+        message += (
+            "\n检测到 WSLg：WSLg 的 Weston 不支持 X11 抓屏或 wlr-screencopy，"
+            "Linux 侧无法录制屏幕。请改用 Windows 版 qrfile 作为接收端"
+            "（它能抓 Windows 桌面），或在真实 Linux 桌面会话中运行。"
+        )
+    raise InputError(message)
 
 
 def iter_frames(

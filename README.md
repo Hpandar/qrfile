@@ -5,11 +5,11 @@
 适用于：两台机器之间没有网络、没有共享目录、不能插 U 盘，但你至少能“看见”
 其中一台的屏幕（远程桌面、VNC、虚拟机控制台、物理显示器都算）。
 
-- 源机器：`qrfile push <路径>`，把文件压成分片并全屏循环播放二维码；
+- 发送机器：`qrfile push <路径>`，把文件压成分片并全屏循环播放二维码；
 - 接收机器：`qrfile pull <目录>`，截屏、解码、校验、还原。
 
 ```
-源机器                                     接收机器
+发送机器                                     接收机器
 ┌──────────────────────────┐   屏幕/画面   ┌──────────────────────────┐
 │ qrfile push /data        │ ───────────→ │ qrfile pull D:\out       │
 │ 压缩 → 分片 → 全屏循环    │              │ 截屏 → 解码 → 校验 → 还原 │
@@ -25,12 +25,13 @@
 - **自动压缩**：默认在 zlib / lzma 里选最小的；需要更高压缩率可启用 brotli / zstd / 7z。
 - **缺片可补**：播放器底部常驻「播放区间」输入框，填入缺片范围即可只播这些页，不用退出重来。
 - **自动化**：自动找目标窗口、自动调到前台、运行期间阻止息屏、默认 30 分钟自动退出。
-- **跨平台**：Windows 与 Linux 产物可直接互解，源机器和接收机器可以用不同系统。
+- **图形界面**：发送 / 接收 / 诊断 / 设置集中在 Qt 控制台，播放器仍是独立全屏窗口。
+- **跨平台**：Windows 与 Linux 产物可直接互解，发送机器和接收机器可以用不同系统。
 - **独立二进制**：目标机器不需要安装 Python。
 
 ## 快速开始
 
-### A 机器（被隔离的源机器）
+### 发送机器（被隔离的那台）
 
 ```bash
 chmod +x qrfile-rhel8
@@ -38,7 +39,7 @@ chmod +x qrfile-rhel8
 ./qrfile-rhel8 push /data
 ```
 
-### B 机器（接收机器）
+### 接收机器（你手边这台）
 
 ```powershell
 .\qrfile.exe doctor            # 确认抓屏后端
@@ -72,9 +73,37 @@ D:\out\data\...                # 根目录 data 会一起还原
 .\qrfile.exe pull D:\out --safe
 ```
 
+## 图形界面
+
+```bash
+pip install -e '.[gui]'
+qrfile gui
+```
+
+独立产物是两个文件，**必须放在同一目录**：
+
+| 文件 | 用途 |
+|---|---|
+| `qrfile` / `qrfile.exe` | CLI（也作为 GUI 的传输子进程） |
+| `qrfile-gui` / `qrfile-gui.exe` | 图形界面；Windows 双击直接打开 |
+
+界面包含：
+
+- **首页**：选择发送机器 / 接收机器，查看最近任务；
+- **发送**：选择文件或目录、快速 / 稳健 / 手机拍屏、自动退出时间；
+- **接收**：输出目录、自动定位窗口、稳健解码、采集区域；
+- **监控**：进度环、分片热力图、缺片范围复制、播放区间输入；
+- **诊断 / 设置**：环境检查、压缩器、默认参数与最近路径。
+
+GUI 不直接执行传输循环：它启动同目录的 CLI 子进程，读取 NDJSON 事件，
+所以全屏播放器、抓屏和解码都在独立进程里，界面卡住不会影响传输。
+
+完整的交互设计、效果图、技术选型与排期见
+[docs/UI-PLAN.html](docs/UI-PLAN.html)。
+
 ## 命令与参数
 
-### `push` —— A 机器（编码 + 全屏播放）
+### `push` —— 发送机器（编码 + 全屏播放）
 
 ```
 qrfile push <路径> [选项]
@@ -101,7 +130,7 @@ Esc / q / Q / Ctrl+Q / Ctrl+C   退出（输入框里按 Esc 只结束编辑）
 f                                全屏 / 窗口切换
 ```
 
-### `pull` —— B 机器（截屏 + 解码 + 还原）
+### `pull` —— 接收机器（截屏 + 解码 + 还原）
 
 ```
 qrfile pull <输出目录> [选项]
@@ -126,6 +155,7 @@ qrfile pull <输出目录> [选项]
 
 | 命令 | 用途 |
 |---|---|
+| `gui` | 打开图形界面（需要 `qrfile[gui]` 依赖） |
 | `doctor` | 检查 tkinter、抓屏后端、压缩器、推荐布局 |
 | `compressors` | 列出本机可用的压缩器 |
 | `send` / `recv` | 高级版播放 / 接收，可手动调布局、帧率等 |
@@ -140,21 +170,21 @@ qrfile pull <输出目录> [选项]
 长文件播一轮可能需要几分钟，中途卡一下可能漏几页。**不需要整轮重来，也不需要
 退出播放器。**
 
-接收端（B）会实时打印：
+接收机器会实时打印：
 
 ```
 缺 37 片：12-18,204,900-905
 ============================================================
 播放区间（保持本窗口运行）：
-  1) 在 A 机器播放器底部的「播放区间」输入框填入上面的范围，回车；
-  2) 或退出播放器后，在 A 机器执行：
+  1) 在发送机器播放器底部的「播放区间」输入框填入上面的范围，回车；
+  2) 或退出播放器后，在发送机器执行：
      qrfile push --repair "12-18,204,900-905"
 ============================================================
 ```
 
-**保持 B 窗口运行**，在 A 机器播放器底部常驻的「播放区间」输入框里填入缺片
-范围（也可以直接粘贴接收端整行 `缺 37 片：12-18,204,900-905`），回车即可 ——
-播放器立刻改成只循环这些页，接收端继续收，收齐后自动还原。留空回车则恢复
+**保持接收机器窗口运行**，在发送机器播放器底部常驻的「播放区间」输入框里填入缺片
+范围（也可以直接粘贴接收机器整行 `缺 37 片：12-18,204,900-905`），回车即可 ——
+播放器立刻改成只循环这些页，接收机器继续收，收齐后自动还原。留空回车则恢复
 完整播放；点击输入框或按 `r` 可聚焦，`Esc` 结束编辑。
 
 **一屏多码时会自动适配**：播放器按当前布局的 `per_screen` 把分片号映射成整页。
@@ -170,10 +200,10 @@ qrfile pull <输出目录> [选项]
 ./qrfile-rhel8 push --repair "12-18,204,900-905"
 ```
 
-播放器退出后，A 机器终端也会自动打印区间播放模板：
+播放器退出后，发送机器终端也会自动打印区间播放模板：
 
 ```
-本次共 7640 片。如果接收端提示缺片：
+本次共 7640 片。如果接收机器提示缺片：
   播放器还没退出时，在底部「播放区间」输入框里填缺片范围，回车生效。
   已经退出则执行区间播放命令：
     ./qrfile-rhel8 push --repair "<缺片范围>"
@@ -185,7 +215,7 @@ qrfile pull <输出目录> [选项]
 - 正常播放时会在**当前目录**自动生成 `.qrfile-session.json`；
 - 区间播放命令要在同一个目录执行；
 - 源文件内容不能变（存档里有集合级 SHA-256，变了会拒绝）；
-- 接收端不能重启（已收的分片在内存里，重启就丢了）。
+- 接收机器不能重启（已收的分片在内存里，重启就丢了）。
 
 ## 还原后的目录结构
 
@@ -231,6 +261,7 @@ Windows 版包含 numpy + dxcam（DXGI 抓屏）；Linux 版使用 mss / grim，
 
 | 能力 | 依赖 |
 |---|---|
+| 图形界面 | `PySide6-Essentials>=6.9,<6.10`（`pip install 'qrfile[gui]'`） |
 | Wayland 抓屏 | `grim` |
 | Linux 按窗口标题定位/激活 | `wmctrl` 或 `xdotool` |
 | `decode-video` | `opencv-python-headless`（并需重新打包或从源码运行） |
@@ -243,23 +274,29 @@ Windows 版包含 numpy + dxcam（DXGI 抓屏）；Linux 版使用 mss / grim，
 ```bash
 python3 -m venv .venv
 source .venv/bin/activate        # Windows: .venv\Scripts\activate
-pip install -e .
+pip install -e '.[gui]'          # 只做 CLI 可以只装 -e .
 ```
 
 ### Windows 独立 exe
 
 ```bash
 python -m pip install pyinstaller
-python packaging/build.py            # → dist/qrfile.exe
+python packaging/build.py            # → dist/qrfile.exe（CLI）
+python packaging/build.py --gui      # → dist/qrfile-gui.exe（界面）
+python packaging/build.py --all      # 两个都打（推荐）
 python packaging/build.py --onedir   # 目录版，启动更快
 ```
 
 ### Linux 独立二进制
 
 ```bash
-bash packaging/build_linux.sh            # → dist/qrfile
+bash packaging/build_linux.sh            # → dist/qrfile（CLI）
+bash packaging/build_linux.sh --gui      # → dist/qrfile-gui
+bash packaging/build_linux.sh --all      # 两个都打（推荐）
 bash packaging/build_linux.sh --onedir
 ```
+
+GUI 产物会调用同目录下的 `qrfile` / `qrfile.exe`；分发时两个文件必须一起带走。
 
 RHEL 8 / AlmaLinux 8 需要先安装：
 
@@ -274,11 +311,11 @@ Linux 上打。Linux 产物依赖构建机的 glibc，建议在目标发行版�
 
 ## 故障排查
 
-### B 端显示“一帧都没解出来”
+### 接收机器显示“一帧都没解出来”
 
 1. 看自动生成的 `qrfile-debug.png`：
    - 黑屏/纯色 → 息屏、锁屏、窗口被遮挡，或采集区域不对；
-   - 有二维码但模糊 → 画面被缩放，A 用 `--safe`，B 用 `--robust`；
+   - 有二维码但模糊 → 画面被缩放，发送机器用 `--safe`，接收机器用 `--robust`；
    - 只有终端/桌面 → 目标窗口不在采集区域，或被其他窗口盖住。
 2. 运行 `qrfile.exe doctor`，确认「抓屏」后端是 **dxcam**；
 3. 显式指定窗口：
@@ -317,6 +354,26 @@ gsettings set org.gnome.desktop.session idle-delay 0
 gsettings set org.gnome.desktop.screensaver lock-enabled false
 ```
 
+### WSLg 下 Linux 接收端抓屏失败
+
+在 WSLg（Windows 的 Linux 图形子系统）里运行 Linux 版 `pull` / `recv` 时，
+可能看到：
+
+```
+mss: X11 Protocol Error
+X Error of failed request: 8
+compositor doesn't support wlr-screencopy-unstable-v1
+```
+
+这是 WSLg 的限制：Weston 既不支持 X11 的 `XGetImage`，也不支持 grim 需要的
+`wlr-screencopy` 协议，所以 Linux 进程无法录制 WSLg 桌面。
+
+**解决：用 Windows 版接收端。** WSLg 窗口就是 Windows 桌面上的普通窗口，
+Windows 版 `qrfile.exe recv` 或 `qrfile-gui.exe` 可以直接抓取。已验证
+“Linux 发送（WSLg）→ Windows 接收”逐字节还原成功。
+
+如果必须在 Linux 侧接收，请使用真实 X11 / Wayland 桌面，而不是 WSLg。
+
 ### 压缩不能解
 
 - 默认 `auto`（zlib/lzma）跨平台安全；
@@ -334,7 +391,9 @@ gsettings set org.gnome.desktop.screensaver lock-enabled false
 | 0.4.9 | 全局键盘抓取；默认 30 分钟自动退出；精简参数 |
 | 0.5.0 | 自动激活目标窗口；DPI 感知；采集区域打印 |
 | 0.5.1 | 保留根目录；播放器退出打印区间播放命令模板 |
-| **0.6.0** | 底部常驻「播放区间」输入框；默认一屏多码（fast） |
+| 0.6.0 | 底部常驻「播放区间」输入框；默认一屏多码（fast） |
+| 0.7.0 | Qt 图形界面；结构化 NDJSON 事件；CLI / GUI 双入口 |
+| **0.7.1** | WSLg 抓屏限制提示；GUI 子进程改用 Popen；Windows 桌面构建 |
 
 ## 说明
 
