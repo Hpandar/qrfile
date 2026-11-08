@@ -335,8 +335,9 @@ xset s off -dpms
 
 ### Windows
 
-直接用 `dist\qrfile.exe`，目标机器不需要 Python。要求：Windows 10/11 **x64**、
-可写 TEMP、交互式桌面（`push` / `pull` / `record` 需要）。
+直接用 `dist\qrfile.exe` + `dist\qrfile-gui.exe`，目标机器不需要 Python。
+要求：Windows 10/11 **x64**、可写 TEMP、交互式桌面（`push` / `pull` / `record`
+需要）。GUI 必须和 CLI 放在同一目录。
 
 ### Linux
 
@@ -354,19 +355,44 @@ xset s off -dpms
 
 ```bash
 python3 -m venv .venv && source .venv/bin/activate
-pip install -e .
+pip install -e '.[gui]'                 # 只做 CLI 可以只装 -e .
 qrfile doctor
 ```
 
 构建独立二进制（目标机不需要 Python）：
 
 ```bash
-bash packaging/build_linux.sh            # 单文件 dist/qrfile
+bash packaging/build_linux.sh --all      # CLI + GUI
 bash packaging/build_linux.sh --onedir   # 目录版，启动更快
 ```
 
 **PyInstaller 不能跨平台交叉编译**：Linux 版必须在 Linux 上构建。建议在目标
 发行版或更老的发行版上构建，产物依赖构建机的 glibc 版本。
+
+### RHEL 8 / Rocky 8 / AlmaLinux 8
+
+glibc 为 2.28，满足 PySide6 6.9 的最低要求。默认 Python 3.6 不够：
+
+```bash
+sudo dnf install -y python3.11 python3.11-pip python3.11-devel \
+    python3.11-tkinter binutils
+```
+
+GUI 构建/自检还需要 RHEL 8 的图形运行库；`libxcb-cursor` 不在 BaseOS/AppStream，
+需要 EPEL：
+
+```bash
+sudo dnf install -y mesa-libGL mesa-libEGL libX11 fontconfig freetype \
+    libxkbcommon libxkbcommon-x11 xcb-util xcb-util-wm xcb-util-image \
+    xcb-util-keysyms xcb-util-renderutil
+sudo dnf install -y epel-release
+sudo dnf install -y xcb-util-cursor
+PYTHON=python3.11 bash packaging/build_linux.sh --all
+```
+
+已构建的 RHEL 8 专用包会把上述 RHEL 8 库（含 `libxcb-cursor`）一起打进产物，
+目标机不需要额外安装 EPEL 或这些开发包。已验证 CLI 发送/接收和 GUI 的 xcb
+平台插件在 RHEL 8.10 环境可正常运行。
 
 ### WSLg 限制
 

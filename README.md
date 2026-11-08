@@ -251,10 +251,18 @@ B：pull D:\out
 
 | 平台 | 产物 | 运行要求 |
 |---|---|---|
-| Windows | `qrfile.exe`（约 38 MB） | Windows 10/11 x64；可写 TEMP；交互式桌面 |
-| Linux | `qrfile-rhel8`（约 25 MB） | RHEL 8 / glibc ≥ 2.28；图形会话（`push` 需要） |
+| Windows 10/11 x64 | `qrfile.exe`（约 34 MB，CLI）+ `qrfile-gui.exe`（约 50 MB，GUI） | 交互式桌面；可写 TEMP |
+| Linux x86_64 | `qrfile`（约 30–45 MB，CLI）+ `qrfile-gui`（约 66–85 MB，GUI） | CLI glibc ≥ 2.26；GUI glibc ≥ 2.28；图形会话 |
 
-Windows 版包含 numpy + dxcam（DXGI 抓屏）；Linux 版使用 mss / grim，所以体积更小。
+两个文件必须放在同一目录；GUI 会调用同目录的 CLI 作为传输子进程。
+
+### 已验证平台
+
+- Windows 11 x64
+- Ubuntu 24.04 x86_64
+- Rocky Linux 8.10 / RHEL 8.10 x86_64（glibc 2.28）
+
+Windows 版包含 numpy + dxcam（DXGI 抓屏）；Linux 版使用 mss / grim。
 
 ### 抓屏后端
 
@@ -308,13 +316,39 @@ bash packaging/build_linux.sh --onedir
 
 GUI 产物会调用同目录下的 `qrfile` / `qrfile.exe`；分发时两个文件必须一起带走。
 
-RHEL 8 / AlmaLinux 8 需要先安装：
+### RHEL 8 / Rocky 8 / AlmaLinux 8
+
+RHEL 8 的 glibc 是 **2.28**，满足 PySide6 6.9 的最低要求。默认 Python 3.6
+不够，先安装 Python 3.11：
 
 ```bash
 sudo dnf install -y python3.11 python3.11-pip python3.11-devel \
     python3.11-tkinter binutils
-PYTHON=python3.11 bash packaging/build_linux.sh
 ```
+
+GUI 构建/自检还需要 RHEL 8 的图形运行库：
+
+```bash
+sudo dnf install -y mesa-libGL mesa-libEGL libX11 fontconfig freetype \
+    libxkbcommon libxkbcommon-x11 xcb-util xcb-util-wm xcb-util-image \
+    xcb-util-keysyms xcb-util-renderutil
+```
+
+RHEL 8 基础仓库没有 `libxcb-cursor`，构建 GUI 时需要从 EPEL 安装：
+
+```bash
+sudo dnf install -y epel-release
+sudo dnf install -y xcb-util-cursor
+```
+
+然后：
+
+```bash
+PYTHON=python3.11 bash packaging/build_linux.sh --all
+```
+
+只做 CLI 可以省略 PySide6/EPEL 相关步骤。已构建的 RHEL 8 专用包会把
+`libxcb-cursor` 等 RHEL 8 运行库一起打进产物，目标机不需要 EPEL。
 
 PyInstaller **不能跨平台交叉编译**：Windows exe 在 Windows 上打，Linux ELF 在
 Linux 上打。Linux 产物依赖构建机的 glibc，建议在目标发行版或更老的发行版上构建。
