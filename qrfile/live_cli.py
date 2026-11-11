@@ -34,7 +34,7 @@ from .capture import (
 )
 from .chunk import new_session_id
 from .compressors import describe_availability
-from .decode import RestoreOptions, decode_image, restore_session
+from .decode import RestoreOptions, decode_image, decode_rgb_image, restore_session
 from .errors import (
     EXIT_INTERNAL,
     EXIT_VERIFY_FAILED,
@@ -118,6 +118,17 @@ def _human_seconds(seconds: float) -> str:
     if minutes < 60:
         return f"{minutes:.1f} 分钟"
     return f"{minutes / 60:.1f} 小时"
+
+
+def _describe_duration(seconds: float) -> str:
+    """把 ``--duration`` 说清楚。
+
+    以前这里写的是 ``duration / 60:.0f``，10 秒会被四舍五入成“0 分钟”，
+    看起来像“没有设置自动退出”，实际 10 秒后就停了。按秒/分钟分开说。
+    """
+    if seconds <= 0:
+        return "关闭（一直循环，直到手动停止）"
+    return f"{_human_seconds(seconds)}后自动停止（--duration 0 可关闭）"
 
 
 def _read_stdin_commands(out: queue.Queue[str]) -> None:
@@ -333,6 +344,7 @@ def _send_repair(
             "module_px": record.layout.module_px,
             "columns": record.layout.columns,
             "rows": record.layout.rows,
+            "channels": record.layout.channels,
             "per_screen": record.layout.per_screen,
             "description": record.layout.describe(),
         },
@@ -348,8 +360,7 @@ def _send_repair(
     _echo(f"播放区间：{format_ranges(indices)} → {len(pages)} 页（会话 {plan.session_hex}）")
     _echo("接收机器保持运行；结束后按 Esc 退出。")
     _echo("播放中可在底部「播放区间」输入框修改（留空回车恢复完整播放）。")
-    if duration > 0:
-        _echo(f"自动退出：{duration / 60:.0f} 分钟后（--duration 0 可关闭）")
+    _echo(f"自动退出：{_describe_duration(duration)}")
 
     if dump_pages:
         target = Path(dump_pages)
@@ -424,10 +435,18 @@ def _send_impl(
     shuffle: bool = False,
     keep_awake: bool = True,
     events_json: bool = False,
+    rgb: bool = False,
 ) -> None:
     if events_json:
         events.enable_events()
         events.emit("state", state="preparing")
+
+    if rgb and camera:
+        raise InputError("--rgb 不能和 --camera 同时使用（彩色通道只适合无损数字采集）")
+    if repair and rgb:
+        raise InputError(
+            "--repair 会按会话存档恢复布局（含通道数），不能同时指定 --rgb"
+        )
 
     limits = ScanLimits(
         max_file_size=max_file_size or LIVE_LIMITS.max_file_size,
@@ -479,6 +498,7 @@ def _send_impl(
         width, height = _screen_size(screen_size)
         chosen_ecc = "H" if camera else ("M" if ecc.lower() == "auto" else ecc.upper())
         min_px = 6 if camera else 4
+        channels = 3 if rgb else 1
 
         layout = choose_layout(
             width,
@@ -488,6 +508,7 @@ def _send_impl(
             module_px=module_px,
             min_module_px=min_px,
             max_codes=max_codes,
+            channels=channels,
         )
 
         manifest, blob = manifest_for_sources(
@@ -557,6 +578,7 @@ def _send_impl(
                 "module_px": layout.module_px,
                 "columns": layout.columns,
                 "rows": layout.rows,
+                "channels": layout.channels,
                 "per_screen": layout.per_screen,
                 "description": layout.describe(),
             },
@@ -571,12 +593,14 @@ def _send_impl(
               f"{_human_bytes(len(blob))} -> {_human_bytes(plan.data_bytes)}"
               f"（{ratio:.1f}%）")
         _echo(f"布局    {layout.describe()}")
+        if layout.channels > 1:
+            _echo("模式    RGB 三通道（每个 tile 的 R/G/B 各装一张码；要求无损 RGB 采集）")
         _echo(f"分片    {plan.total} 片 · {pages} 屏 · 渲染 {per_page * 1000:.0f} ms/屏 "
               f"→ 实际 {effective_fps:.1f} fps · 约 {_human_seconds(cycle_seconds)}/轮")
         _echo(f"屏幕    {width}×{height} · 掩码 "
               f"{'最优（慢）' if mask is None else f'固定 {mask}（快）'} · 会话 {plan.session_hex}")
-        if duration > 0 and not dry_run:
-            _echo(f"自动退出：{duration / 60:.0f} 分钟后（--duration 0 可关闭）")
+        if not dry_run:
+            _echo(f"自动退出：{_describe_duration(duration)}")
 
         if dry_run:
             _echo("")
@@ -590,6 +614,7 @@ def _send_impl(
                     module_px=module_px,
                     min_module_px=min_px,
                     max_codes=max_codes,
+                    channels=channels,
                 ),
                 1,
             ):
@@ -674,6 +699,8 @@ def _send_impl(
 @click.option("--compression", type=click.Choice(COMPRESSION_VALUES), default="auto",
               show_default=True, help="auto=只用标准库；max=再试 brotli/zstd/7z")
 @click.option("--max-codes", type=int, default=64, show_default=True, help="一屏最多几个码")
+@click.option("--rgb", is_flag=True,
+              help="RGB 三通道：每个 tile 的 R/G/B 各装一张码（3× 载荷；要求无损 RGB 采集）")
 @click.option("--camera", is_flag=True, help="按手机拍屏优化：ECC H + 更大模块 + 最优掩码")
 @click.option("--accurate-mask", is_flag=True, hidden=True)
 @click.option("--windowed", is_flag=True, hidden=True)
@@ -706,7 +733,9 @@ def send_cmd(**kwargs) -> None:
 # --------------------------------------------------------------------------
 
 
-def _decode_symbols(image, *, robust: bool):
+def _decode_symbols(image, *, robust: bool, rgb: bool = False):
+    if rgb:
+        return decode_rgb_image(image, source="屏幕", robust=robust)
     if robust:
         return decode_robust(image, source="屏幕").symbols
     return decode_image(image, source="屏幕")
@@ -776,6 +805,7 @@ def _receive_loop(
     capture: str = "auto",
     keep_awake: bool = True,
     events_json: bool = False,
+    rgb: bool = False,
 ) -> None:
     if events_json:
         events.enable_events()
@@ -799,6 +829,8 @@ def _receive_loop(
         _echo(f"区域：{left},{top} · {right - left}x{bottom - top}")
     else:
         _echo("区域：整屏")
+    if rgb:
+        _echo("模式：RGB 三通道（拆 R/G/B 后逐通道解码；要求无损采集）")
     _echo("集齐后自动停止；Ctrl+C 放弃。")
     _echo("")
 
@@ -828,7 +860,7 @@ def _receive_loop(
                 image.save(frames_dir / f"frame_{saved:06d}.png", compress_level=1)
 
             try:
-                symbols = _decode_symbols(image, robust=robust)
+                symbols = _decode_symbols(image, robust=robust, rgb=rgb)
             except InputError:
                 symbols = ()
 
@@ -983,6 +1015,7 @@ def _recv_impl(
     keep_awake: bool = True,
     events_json: bool = False,
     screen: int | None = None,
+    rgb: bool = False,
 ) -> None:
     if events_json:
         events.enable_events()
@@ -1001,6 +1034,7 @@ def _recv_impl(
         capture=capture,
         keep_awake=keep_awake,
         events_json=events_json,
+        rgb=rgb,
     )
 
 
@@ -1014,6 +1048,7 @@ def _pull_impl(
     keep_awake: bool = True,
     events_json: bool = False,
     screen: int | None = None,
+    rgb: bool = False,
 ) -> None:
     if events_json:
         events.enable_events()
@@ -1051,6 +1086,7 @@ def _pull_impl(
         capture=capture,
         keep_awake=keep_awake,
         events_json=events_json,
+        rgb=rgb,
     )
 
 
@@ -1066,6 +1102,8 @@ def _pull_impl(
 @click.option("--safe", is_flag=True,
               help="更稳：一屏一码 + 更大模块（远端画面被缩放时用）")
 @click.option("--camera", is_flag=True, help="用手机拍屏（ECC H + 最优掩码 + 一屏一码）")
+@click.option("--rgb", is_flag=True,
+              help="RGB 三通道：每个 tile 的 R/G/B 各装一张码（3× 载荷；要求无损 RGB 采集）")
 @click.option("--keep-awake/--no-keep-awake", default=True, hidden=True)
 @click.option("--duration", type=float, default=1800.0, show_default=True,
               help="多少秒后自动停；0=一直循环（默认 30 分钟，防卡死）")
@@ -1078,6 +1116,7 @@ def push_cmd(
     fast: bool,
     safe: bool,
     camera: bool,
+    rgb: bool,
     duration: float,
     repair: str | None,
     keep_awake: bool,
@@ -1085,8 +1124,10 @@ def push_cmd(
 ) -> None:
     """发送机器：把文件/目录播出去。日常就一条：qrfile push <路径>"""
     if repair:
-        if fast or safe or camera:
-            raise click.UsageError("--repair 不能和 --fast/--safe/--camera 同时用")
+        if fast or safe or camera or rgb:
+            raise click.UsageError(
+                "--repair 会按会话存档恢复布局，不能和 --fast/--safe/--camera/--rgb 同时用"
+            )
         _run(
             lambda: _send_impl(
                 (),
@@ -1123,6 +1164,8 @@ def push_cmd(
         raise click.UsageError("--fast 和 --safe 只能二选一")
     if camera and fast:
         raise click.UsageError("--camera 和 --fast 不能同时用")
+    if rgb and (safe or camera):
+        raise click.UsageError("--rgb 不能和 --safe/--camera 同时用（RGB 只适合无损数字采集）")
 
     # 默认 fast：一屏多码。--safe / --camera 退回一屏一码保稳。
     mode = "single" if (safe or camera) else "auto"
@@ -1153,6 +1196,7 @@ def push_cmd(
             duration=duration,
             keep_awake=keep_awake,
             events_json=events_json,
+            rgb=rgb,
         )
     )
 
@@ -1164,6 +1208,8 @@ def push_cmd(
 @click.option("--region", default=None, help="手动指定区域 x,y,w,h（通常不需要）")
 @click.option("--screen", type=int, default=None,
               help="指定接收的显示器编号（1=第一块；多屏时用）")
+@click.option("--rgb", is_flag=True,
+              help="RGB 三通道模式：拆 R/G/B 后逐通道解码（发送端也要开）")
 @click.option("--capture", type=click.Choice(["auto", "dxcam", "mss", "imagegrab"]),
               default="auto", hidden=True, help="采集后端（诊断用）")
 @click.option("--keep-awake/--no-keep-awake", default=True, hidden=True)
@@ -1175,6 +1221,7 @@ def pull_cmd(
     window: str | None,
     region: str | None,
     screen: int | None,
+    rgb: bool,
     capture: str,
     keep_awake: bool,
     events_json: bool,
@@ -1187,6 +1234,7 @@ def pull_cmd(
             window=window,
             region=region,
             screen=screen,
+            rgb=rgb,
             capture=capture,
             keep_awake=keep_awake,
             events_json=events_json,
@@ -1207,6 +1255,8 @@ def pull_cmd(
 @click.option("--save-frames", type=click.Path(file_okay=False), default=None,
               help="顺手把采集到的帧也存下来（便于事后重解）")
 @click.option("--robust", is_flag=True, help="每帧多策略尝试（慢，适合手机拍屏）")
+@click.option("--rgb", is_flag=True,
+              help="RGB 三通道模式：拆 R/G/B 后逐通道解码（发送端也要开）")
 @click.option("--capture", type=click.Choice(["auto", "dxcam", "mss", "imagegrab"]),
               default="auto", hidden=True, help="采集后端（诊断用）")
 @click.option("--keep-awake/--no-keep-awake", default=True, hidden=True)
@@ -1286,6 +1336,7 @@ def _decode_video_impl(
     output: str,
     overwrite: bool,
     no_restore_times: bool,
+    rgb: bool = False,
 ) -> None:
     collector = LiveCollector()
     for video in videos:
@@ -1294,7 +1345,11 @@ def _decode_video_impl(
         for image in iter_video_frames(video):
             frames += 1
             try:
-                symbols = decode_image(image, source=str(video))
+                symbols = (
+                    decode_rgb_image(image, source=str(video))
+                    if rgb
+                    else decode_image(image, source=str(video))
+                )
             except InputError:
                 continue
             for symbol in symbols:
@@ -1329,6 +1384,8 @@ def _decode_video_impl(
               help="还原到哪个目录")
 @click.option("--overwrite", is_flag=True)
 @click.option("--no-restore-times", is_flag=True)
+@click.option("--rgb", is_flag=True,
+              help="RGB 三通道模式：拆 R/G/B 后逐通道解码")
 def decode_video_cmd(**kwargs) -> None:
     """从 mp4/mkv/avi/gif 等视频里抽帧并还原（需要 OpenCV）。"""
     _run(lambda: _decode_video_impl(kwargs.pop("videos"), **kwargs))

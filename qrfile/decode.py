@@ -79,6 +79,43 @@ def decode_image(image: Image.Image, *, source: str = "") -> list[DecodedSymbol]
     return symbols
 
 
+def decode_rgb_image(
+    image: Image.Image, *, source: str = "", robust: bool = False
+) -> list[DecodedSymbol]:
+    """从 RGB 三通道图里解出所有二维码。
+
+    发送端把 3 张独立的 QR 分别写进 R/G/B 通道，合成一张彩色图。这里把图拆回
+    三个灰度通道，逐个交给 zxing 解码。**不要**直接解合成图 —— 彩色像素对
+    QR 解码器来说是噪声，拆通道才是正确的读法。
+
+    同一份载荷如果出现在多个通道里（理论上不该发生），只保留一份；分片去重
+    最终仍由 :class:`qrfile.receiver.LiveCollector` 负责。
+    """
+    rgb = image.convert("RGB")
+    bands = rgb.split()
+    names = ("R", "G", "B")
+
+    symbols: list[DecodedSymbol] = []
+    seen: set[bytes] = set()
+
+    for name, band in zip(names, bands):
+        channel_source = f"{source}[{name}]" if source else name
+        if robust:
+            from .imageprep import decode_robust
+
+            found = decode_robust(band, source=channel_source).symbols
+        else:
+            found = decode_image(band, source=channel_source)
+
+        for symbol in found:
+            if symbol.payload in seen:
+                continue
+            seen.add(symbol.payload)
+            symbols.append(symbol)
+
+    return symbols
+
+
 def load_image(path: str | os.PathLike[str]) -> Image.Image:
     """打开一张图（只读）。"""
     try:
@@ -89,13 +126,20 @@ def load_image(path: str | os.PathLike[str]) -> Image.Image:
     return image
 
 
-def decode_file(path: str | os.PathLike[str], *, robust: bool = False) -> list[DecodedSymbol]:
+def decode_file(
+    path: str | os.PathLike[str], *, robust: bool = False, rgb: bool = False
+) -> list[DecodedSymbol]:
     """从一张图片文件里解出所有二维码。
 
     ``robust=True`` 时走 :func:`qrfile.imageprep.decode_robust` —— 对照片做多种
     渲染变体和二值化的多次尝试。干净 PNG 用默认的快路径就够了。
+    ``rgb=True`` 时按 RGB 三通道拆分，分别解码。
     """
     image = load_image(path)
+    if rgb:
+        return decode_rgb_image(
+            image, source=os.fspath(path), robust=robust
+        )
     if robust:
         from .imageprep import decode_robust
 
@@ -104,7 +148,11 @@ def decode_file(path: str | os.PathLike[str], *, robust: bool = False) -> list[D
 
 
 def decode_bytes(
-    data: bytes, *, source: str = "<内存里的图>", robust: bool = False
+    data: bytes,
+    *,
+    source: str = "<内存里的图>",
+    robust: bool = False,
+    rgb: bool = False,
 ) -> list[DecodedSymbol]:
     """从编码后的图片字节（PNG/JPEG 等）里解出所有二维码。
 
@@ -116,6 +164,8 @@ def decode_bytes(
         image.load()
     except (OSError, ValueError) as exc:
         raise InputError(f"解析图片字节失败（{source}）：{exc}") from exc
+    if rgb:
+        return decode_rgb_image(image, source=source, robust=robust)
     if robust:
         from .imageprep import decode_robust
 

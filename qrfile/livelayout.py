@@ -41,6 +41,9 @@ class Layout:
     screen_width: int
     screen_height: int
     status_height: int
+    #: 每个物理 tile 承载几个独立二维码。1 = 普通黑白 QR；
+    #: 3 = RGB 三通道（R/G/B 各一张 QR）。
+    channels: int = 1
 
     # ---------------------------------------------------------------- 几何
 
@@ -53,8 +56,18 @@ class Layout:
         return (self.modules + 2 * self.margin) * self.module_px
 
     @property
-    def per_screen(self) -> int:
+    def tiles_per_screen(self) -> int:
+        """一屏有多少个物理 tile。"""
         return self.columns * self.rows
+
+    @property
+    def per_screen(self) -> int:
+        """一屏承载多少个分片（码）。
+
+        RGB 三通道时一个 tile 承载 3 个分片，所以这里要乘 ``channels``；
+        页面映射、区间播放和 ``bytes_per_screen`` 都依赖这个值。
+        """
+        return self.columns * self.rows * self.channels
 
     @property
     def usable_height(self) -> int:
@@ -92,9 +105,12 @@ class Layout:
         return start, end
 
     def describe(self) -> str:
+        grid = f"{self.columns}×{self.rows}"
+        if self.channels > 1:
+            grid += f"×{self.channels}通道"
         return (
             f"v{self.version}-{self.ecc} · {self.module_px}px/模块 · "
-            f"{self.columns}×{self.rows}={self.per_screen} 码/屏 · "
+            f"{grid}={self.per_screen} 码/屏 · "
             f"单码 {self.body_capacity} B · 单屏 {self.bytes_per_screen} B"
         )
 
@@ -111,6 +127,7 @@ def _layouts_for(
     gap: int,
     status_height: int,
     max_codes: int,
+    channels: int,
 ) -> list[Layout]:
     usable_w = screen_width
     usable_h = screen_height - status_height
@@ -137,8 +154,9 @@ def _layouts_for(
             else:
                 columns = max(1, (usable_w - gap) // (tile + gap))
                 rows = max(1, (usable_h - gap) // (tile + gap))
-                # 上限：别让一屏塞上百个码 —— 解码端会累，画面也会糊
-                while columns * rows > max_codes:
+                # 上限：别让一屏塞上百个码 —— 解码端会累，画面也会糊。
+                # RGB 三通道时一个 tile 里就有 3 个码，所以按码数算。
+                while columns * rows * channels > max_codes:
                     if columns >= rows and columns > 1:
                         columns -= 1
                     elif rows > 1:
@@ -162,6 +180,7 @@ def _layouts_for(
                     screen_width=screen_width,
                     screen_height=screen_height,
                     status_height=status_height,
+                    channels=channels,
                 )
             )
 
@@ -180,21 +199,31 @@ def choose_layout(
     gap: int = 8,
     status_height: int = 48,
     max_codes: int = 64,
+    channels: int = 1,
 ) -> Layout:
     """选出单屏净载荷最大的布局。
 
     ``mode="single"`` 强制一屏一码（最稳，适合手机拍屏）；
     ``mode="auto"`` 在一屏多码里找最优。
+
+    ``channels=3`` 表示 RGB 三通道：每个物理 tile 同时承载 3 个独立二维码，
+    单屏净载荷和 ``per_screen`` 都按 3 倍计算。
     """
     ecc = ecc.upper()
     if ecc not in ECC_LEVELS:
         raise InputError(f"纠错等级必须是 {'/'.join(ECC_LEVELS)} 之一，收到 {ecc!r}")
     if mode not in ("auto", "single"):
         raise InputError(f"mode 只能是 auto 或 single，收到 {mode!r}")
+    if channels not in (1, 3):
+        raise InputError(f"channels 只能是 1（普通）或 3（RGB 三通道），收到 {channels!r}")
     if screen_width < 200 or screen_height < 200:
         raise InputError(f"屏幕分辨率太小：{screen_width}×{screen_height}")
     if max_codes < 1:
         raise InputError("--max-codes 必须 ≥ 1")
+    if channels > max_codes:
+        raise InputError(
+            f"--max-codes={max_codes} 小于通道数 {channels}，放不下任何一个 tile"
+        )
 
     candidates = _layouts_for(
         screen_width,
@@ -207,6 +236,7 @@ def choose_layout(
         gap=gap,
         status_height=status_height,
         max_codes=max_codes,
+        channels=channels,
     )
     if not candidates:
         raise InputError(
@@ -233,6 +263,7 @@ def render_variants(
     kwargs.setdefault("gap", 8)
     kwargs.setdefault("status_height", 48)
     kwargs.setdefault("max_codes", 64)
+    kwargs.setdefault("channels", 1)
     candidates = _layouts_for(screen_width, screen_height, ecc=ecc, mode=mode, **kwargs)
     seen: set[tuple[int, int, int, int]] = set()
     unique: list[Layout] = []

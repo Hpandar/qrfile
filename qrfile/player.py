@@ -17,6 +17,7 @@ import queue
 import random
 import sys
 import threading
+import traceback
 from typing import Sequence
 
 import segno
@@ -119,6 +120,48 @@ def _status_font(size: int = 18) -> ImageFont.ImageFont:
     return _font_cache[size]
 
 
+def _blank_tile(layout: Layout) -> Image.Image:
+    """一个空白的 L 模式 tile（用于 RGB 模式最后不足 3 个分片时补位）。"""
+    return Image.new("L", (layout.tile_px, layout.tile_px), 255)
+
+
+def _tile_image(
+    payloads: Sequence[bytes],
+    layout: Layout,
+    *,
+    mask: int | None,
+) -> Image.Image:
+    """把一组分片渲染成一个 tile。
+
+    ``channels == 1`` 时返回 L 模式灰度图；``channels == 3`` 时返回 RGB 图，
+    R/G/B 三个通道各装一张独立的二维码。最后不足 ``channels`` 个分片时用
+    白色补位 —— 那个通道里没有可解码的码，不会产生假分片。
+    """
+    images = [qr_image(payload, layout, mask=mask) for payload in payloads]
+    if layout.channels == 1:
+        return images[0]
+
+    if len(images) < layout.channels:
+        filler = _blank_tile(layout)
+        images.extend(filler for _ in range(layout.channels - len(images)))
+
+    # 所有通道必须同尺寸（qr_image 会补到布局容量，正常都等于 tile_px）。
+    # 极端情况下某个通道尺寸不同，就居中放到白色画布上，避免 merge 抛错。
+    target = images[0].size
+    normalized: list[Image.Image] = []
+    for image in images:
+        if image.size == target:
+            normalized.append(image)
+            continue
+        canvas = Image.new("L", target, 255)
+        canvas.paste(
+            image,
+            ((target[0] - image.width) // 2, (target[1] - image.height) // 2),
+        )
+        normalized.append(canvas)
+    return Image.merge("RGB", normalized)
+
+
 def compose_page(
     frames: Sequence[bytes],
     page_index: int,
@@ -129,16 +172,24 @@ def compose_page(
     mask: int | None = 3,
     status_note: str = "",
 ) -> Image.Image:
-    """渲染第 ``page_index`` 屏 —— 一张和屏幕等大的灰度图。"""
+    """渲染第 ``page_index`` 屏。
+
+    普通模式返回 L 模式灰度图；RGB 三通道模式返回 RGB 图，每个物理 tile
+    的 R/G/B 通道各装一张二维码。
+    """
     width, height = layout.screen_width, layout.screen_height
-    page = Image.new("L", (width, height), 255)
+    mode = "RGB" if layout.channels > 1 else "L"
+    background = (255, 255, 255) if mode == "RGB" else 255
+    page = Image.new(mode, (width, height), background)
 
     start, end = layout.chunk_range(page_index, len(frames))
     batch = frames[start:end]
 
-    for offset, payload in enumerate(batch):
-        image = qr_image(payload, layout, mask=mask)
-        row, column = divmod(offset, layout.columns)
+    for offset in range(0, len(batch), layout.channels):
+        group = batch[offset : offset + layout.channels]
+        image = _tile_image(group, layout, mask=mask)
+        tile_index = offset // layout.channels
+        row, column = divmod(tile_index, layout.columns)
         x = layout.gap + column * (layout.tile_px + layout.gap)
         y = layout.gap + row * (layout.tile_px + layout.gap)
         # 最后一个分片可能版本更小 —— 在格子里居中，画面才整齐
@@ -149,19 +200,22 @@ def compose_page(
     if layout.status_height >= _STATUS_HEIGHT_MIN:
         bar_top = height - layout.status_height
         draw = ImageDraw.Draw(page)
-        draw.rectangle([0, bar_top, width, height], fill=0)
+        bar_fill = (0, 0, 0) if mode == "RGB" else 0
+        text_fill = (255, 255, 255) if mode == "RGB" else 255
+        draw.rectangle([0, bar_top, width, height], fill=bar_fill)
         total_pages = layout.page_count(len(frames))
         state = "已暂停" if paused else "播放中"
         if status_note:
             state = f"{state}（{status_note}）"
+        channel_note = f" · {layout.channels} 通道" if layout.channels > 1 else ""
         text = (
             f" qrfile 第 {page_index + 1}/{total_pages} 屏  ·  "
-            f"分片 {start + 1}-{end}/{len(frames)}  ·  "
+            f"分片 {start + 1}-{end}/{len(frames)}{channel_note}  ·  "
             f"{fps:.1f} fps  ·  {state}  ·  空格 暂停  ↑/↓ 调速  "
             f"r 播放区间  Esc 退出"
         )
         font = _status_font(max(12, layout.status_height // 3))
-        draw.text((12, bar_top + max(4, (layout.status_height - 18) // 2)), text, fill=255, font=font)
+        draw.text((12, bar_top + max(4, (layout.status_height - 18) // 2)), text, fill=text_fill, font=font)
 
     return page
 
@@ -197,6 +251,7 @@ class _PageProducer(threading.Thread):
         #: 显示在页脚状态栏里的附加说明（例如"播放区间 12-14,204"）
         self.status_note = ""
         self.error: BaseException | None = None
+        self.error_trace = ""
         # 播放页集合可能被主线程随时切换（播放器底部的「播放区间」输入框）。
         # 用版本号让渲染线程立刻放弃旧页队列，而不是把一整轮旧页播完。
         self._pages_lock = threading.Lock()
@@ -262,6 +317,7 @@ class _PageProducer(threading.Thread):
                     )
                 except BaseException as exc:  # 渲染失败要让主线程知道
                     self.error = exc
+                    self.error_trace = traceback.format_exc()
                     return
 
                 if not self._put(index, image, version):
@@ -366,6 +422,8 @@ class Player:
             "input_active": False,
             "page": 0,
             "last_emitted_page": -1,
+            #: 谁让播放器停下来的；退出日志会带上它，便于排查“自动退出”。
+            "stop_reason": "",
         }
 
         def apply_window_mode() -> None:
@@ -409,6 +467,7 @@ class Player:
             pages=total_pages,
             fps=round(self.fps, 2),
             per_screen=self.layout.per_screen,
+            channels=self.layout.channels,
         )
         bar_height = max(36, self.layout.status_height or 40)
         font_size = max(10, min(15, bar_height // 3))
@@ -487,9 +546,12 @@ class Player:
         def tick() -> None:
             if self.producer.error is not None:
                 message = f"渲染失败：{self.producer.error}"
+                trace = self.producer.error_trace or ""
                 print(message, file=sys.stderr if self.events_json else sys.stdout)
-                events.emit_error("render_failed", message)
-                stop()
+                if trace:
+                    print(trace, file=sys.stderr if self.events_json else sys.stdout)
+                events.emit_error("render_failed", message, details={"traceback": trace})
+                stop(reason="render-error")
                 return
             if not state["paused"]:
                 try:
@@ -571,7 +633,7 @@ class Player:
             verb, _, payload = command.partition(" ")
 
             if verb in ("stop", "quit", "exit"):
-                stop()
+                stop(reason=f"gui-command:{verb}")
             elif verb == "pause":
                 state["paused"] = True
                 self.producer.paused = True
@@ -647,7 +709,7 @@ class Player:
             if state["input_active"]:
                 leave_interval_input()
                 return "break"
-            stop()
+            stop(reason="key:Esc")
             return "break"
 
         def toggle_pause(event=None) -> str:
@@ -672,9 +734,14 @@ class Player:
             self.producer.fps = self.fps
             return "break"
 
-        def stop(event=None) -> str:
+        def stop(event=None, *, reason: str = "user") -> str:
             if state["input_active"]:
                 return "break"
+            if not state["stop_reason"]:
+                state["stop_reason"] = reason
+                channel = sys.stderr if self.events_json else sys.stdout
+                print(f"[播放器] 停止：{reason}", file=channel, flush=True)
+                events.emit("state", state="stopped", reason=reason)
             self.producer.stop_event.set()
             try:
                 root.grab_release()
@@ -706,14 +773,14 @@ class Player:
         root.bind("<Escape>", on_escape)
         root.bind("r", focus_interval_input)
         root.bind("R", focus_interval_input)
-        root.bind("q", stop)
-        root.bind("Q", stop)
-        root.bind("<Control-q>", stop)
-        root.bind("<Control-Q>", stop)
-        root.bind("<Control-c>", stop)
-        root.bind("<Control-C>", stop)
+        root.bind("q", lambda event=None: stop(reason="key:q"))
+        root.bind("Q", lambda event=None: stop(reason="key:Q"))
+        root.bind("<Control-q>", lambda event=None: stop(reason="key:Ctrl+Q"))
+        root.bind("<Control-Q>", lambda event=None: stop(reason="key:Ctrl+Q"))
+        root.bind("<Control-c>", lambda event=None: stop(reason="key:Ctrl+C"))
+        root.bind("<Control-C>", lambda event=None: stop(reason="key:Ctrl+C"))
         root.bind("f", toggle_fullscreen)
-        root.protocol("WM_DELETE_WINDOW", stop)
+        root.protocol("WM_DELETE_WINDOW", lambda: stop(reason="window-close"))
 
         def ensure_visible() -> None:
             """正常 WM 下什么都不抢；只有窗口没被映射出来时才强制 0,0 无边框。
@@ -762,7 +829,10 @@ class Player:
         root.after(100, poll_commands)
 
         if duration > 0:
-            root.after(int(duration * 1000), stop)
+            root.after(
+                int(duration * 1000),
+                lambda: stop(reason=f"duration:{duration:g}s"),
+            )
 
         root.after(0, tick)
         try:
@@ -770,4 +840,4 @@ class Player:
         finally:
             self.producer.stop_event.set()
             self.producer.join(timeout=2.0)
-            events.emit("player_stopped")
+            events.emit("player_stopped", reason=state["stop_reason"] or "unknown")

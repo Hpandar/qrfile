@@ -1066,9 +1066,11 @@ def encode(sources, output, profile_name, chunk_size, scale, margin, compression
               help="缺片时也尽量还原（默认是失败即关闭：任何一片不合格就一个字节都不写）")
 @click.option("--robust", is_flag=True,
               help="多渲染/多二值化反复试解。实测常见劣化没有额外收益、耗时约 3 倍，留给疑难图")
+@click.option("--rgb", is_flag=True,
+              help="RGB 三通道模式：每张图拆 R/G/B 后逐通道解码（发送端也需开启）")
 @click.option("--no-restore-times", is_flag=True, help="不恢复文件修改时间")
 @click.option("--quiet", is_flag=True, help="只输出错误，不打印进度")
-def decode(qr, output, session, suffixes, overwrite, partial, robust, no_restore_times, quiet) -> None:
+def decode(qr, output, session, suffixes, overwrite, partial, robust, rgb, no_restore_times, quiet) -> None:
     """把二维码图片还原成文件。默认失败即关闭：任何一片不合格就不写盘。"""
 
     def action() -> None:
@@ -1089,7 +1091,7 @@ def decode(qr, output, session, suffixes, overwrite, partial, robust, no_restore
         unreadable: list[tuple[str, str]] = []
         for path in paths:
             try:
-                symbols = decode_file(path, robust=robust)
+                symbols = decode_file(path, robust=robust, rgb=rgb)
             except InputError as exc:
                 unreadable.append((path, str(exc)))
                 continue
@@ -1228,8 +1230,10 @@ def selftest(profile_name, full, keep) -> None:
 @click.argument("source", type=click.Path(exists=True))
 @click.argument("qr", nargs=-1, required=True, type=click.Path(exists=True))
 @click.option("--session", default=None, help="只核对指定会话（十六进制）")
+@click.option("--rgb", is_flag=True,
+              help="RGB 三通道模式：每张图拆 R/G/B 后逐通道解码")
 @click.option("--quiet", is_flag=True, help="只输出错误，不打印进度")
-def verify(source, qr, session, quiet) -> None:
+def verify(source, qr, session, rgb, quiet) -> None:
     """复核：把二维码还原到内存里，跟源逐个文件比对 —— 不写任何文件。
 
     编码之后想确认"码里装的确实是这份源"，用这个。它比 decode 多做的事是
@@ -1249,7 +1253,7 @@ def verify(source, qr, session, quiet) -> None:
         payloads: list[bytes] = []
         for path in paths:
             try:
-                payloads.extend(s.payload for s in decode_file(path))
+                payloads.extend(s.payload for s in decode_file(path, rgb=rgb))
             except InputError:
                 continue
 
@@ -1318,8 +1322,10 @@ def verify(source, qr, session, quiet) -> None:
 
 @main.command()
 @click.argument("qr", nargs=-1, required=True, type=click.Path(exists=True))
+@click.option("--rgb", is_flag=True,
+              help="RGB 三通道模式：每张图拆 R/G/B 后逐通道解码")
 @click.option("--quiet", is_flag=True, help="只输出错误，不打印进度")
-def info(qr, quiet) -> None:
+def info(qr, rgb, quiet) -> None:
     """只看分片头，列出有哪些会话、各收了多少片 —— 不解载荷、不校验。
 
     排查"到底缺哪几张码"用这个，它比 decode 快得多，也不要求码齐全。
@@ -1340,7 +1346,7 @@ def info(qr, quiet) -> None:
 
         for path in paths:
             try:
-                symbols = decode_file(path)
+                symbols = decode_file(path, rgb=rgb)
             except InputError:
                 continue
             for symbol in symbols:

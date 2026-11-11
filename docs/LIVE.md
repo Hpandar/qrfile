@@ -139,6 +139,32 @@ qrfile decode-video recording.mp4 -o D:\out
 | `--mode single` | 强制一屏一码（默认是 auto） | 远端画面被缩放、拍照链路、追求最稳 |
 | `--module-px N` | 固定每模块像素 | 远端缩放比例未知时，直接从 6 开始试 |
 | `--max-codes N` | 限制一屏码数 | 解码端 CPU 弱、画面太密 |
+| `--rgb` | RGB 三通道：每个 tile 的 R/G/B 各装一张码 | 无损 RGB 链路，想要约 3× 单屏载荷 |
+
+### RGB 三通道（3× 载荷）
+
+普通模式一个物理 tile 只放一张黑白 QR。`--rgb` 把 3 张独立的 v40-L/其他版本的
+二维码分别写进 R/G/B 通道，接收端拆通道后逐个交给 zxing 解码：
+
+```bash
+qrfile push /data --rgb
+qrfile pull D:\out --rgb
+
+# 更高密度（要求原生分辨率、100% 缩放、无损采集）
+qrfile send /data --rgb --ecc L --module-px 2 --fps 5
+qrfile recv D:\out --rgb --fps 8
+```
+
+要求与边界：
+
+- **必须无损 RGB**：VNC raw/ZRLE、本机 dxcam/mss 截屏、无损录屏。RDP 的
+  4:2:0/H.264、JPEG、任何缩放都会让通道串扰。
+- 不要和 `--camera` 一起用；手机拍屏的白平衡、摩尔纹和色渗会让三个通道互相污染。
+- 每个 tile 仍是标准 QR，分片头、CRC、会话号、区间播放和缺片补齐全部复用；
+  某个通道解不出只会表现为缺片，不会产生假数据。
+- 录屏/整屏 PNG 用 `qrfile decode <目录> -o <输出> --rgb`；视频用
+  `qrfile decode-video <视频> -o <输出> --rgb`。
+- `.qrfile-session.json` 会记录 `channels`，所以 `push --repair` 不需要再带 `--rgb`。
 
 ### ⚠️ 远程桌面的缩放是最大的坑
 

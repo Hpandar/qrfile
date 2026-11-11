@@ -14,7 +14,7 @@ import pytest
 from qrfile.archive import build_session, manifest_for_sources
 from qrfile.capture import parse_region
 from qrfile.chunk import ChunkError, new_session_id, unpack_frame
-from qrfile.decode import decode_image
+from qrfile.decode import decode_image, decode_rgb_image
 from qrfile.errors import InputError
 from qrfile.livelayout import choose_layout
 from qrfile.livescan import scan_all
@@ -104,6 +104,22 @@ def test_layout_bigger_screen_at_least_as_good() -> None:
 def test_layout_respects_max_codes() -> None:
     layout = choose_layout(3840, 2160, max_codes=3)
     assert layout.per_screen <= 3
+
+
+def test_layout_rgb_channels_multiplies_payload() -> None:
+    layout = choose_layout(
+        1920, 1080, ecc="L", module_px=2, channels=3, max_codes=64
+    )
+    assert layout.channels == 3
+    assert layout.tiles_per_screen == layout.columns * layout.rows
+    assert layout.per_screen == layout.tiles_per_screen * 3
+    assert layout.bytes_per_screen == layout.per_screen * layout.body_capacity
+    assert "3通道" in layout.describe()
+
+
+def test_layout_rejects_bad_channels() -> None:
+    with pytest.raises(InputError, match="channels"):
+        choose_layout(1920, 1080, channels=2)
 
 
 # --------------------------------------------------------------------------
@@ -227,6 +243,90 @@ def test_live_roundtrip_single_code_mode(tmp_path: Path) -> None:
         assert session.file_bytes(entry) == (source.parent / entry.path).read_bytes()
 
 
+def test_live_roundtrip_through_rgb_pages(tmp_path: Path) -> None:
+    """RGB 三通道：每个 tile 的 R/G/B 各装一张码，拆通道后仍能逐字节还原。"""
+    source = _make_tree(tmp_path)
+    layout = choose_layout(
+        1280, 720, ecc="L", module_px=2, channels=3, max_codes=12
+    )
+    _result, plan = _build(source, chunk_size=layout.body_capacity)
+
+    collector = LiveCollector()
+    for index in range(layout.page_count(plan.total)):
+        page = compose_page(plan.frames, index, layout, fps=5.0)
+        assert page.mode == "RGB"
+        for symbol in decode_rgb_image(page, source=f"page {index}"):
+            collector.feed(symbol.payload)
+
+    assert collector.complete, collector.progress()
+    session, _stats = collector.finalize()
+    for entry in session.manifest.files:
+        assert session.file_bytes(entry) == (source.parent / entry.path).read_bytes()
+    assert session.manifest.root == "src"
+
+
+def test_decode_cli_accepts_rgb_pages(tmp_path: Path) -> None:
+    """录屏/整屏 PNG 落到磁盘后，decode --rgb 也能还原。"""
+    from click.testing import CliRunner
+    from qrfile.cli import main
+
+    source = _make_tree(tmp_path)
+    layout = choose_layout(
+        1280, 720, ecc="L", module_px=2, channels=3, max_codes=12
+    )
+    _result, plan = _build(source, chunk_size=layout.body_capacity)
+
+    qrout = tmp_path / "qrout"
+    qrout.mkdir()
+    for index in range(layout.page_count(plan.total)):
+        compose_page(plan.frames, index, layout, fps=5.0).save(
+            qrout / f"page_{index:03d}.png"
+        )
+
+    restored = tmp_path / "restored"
+    result = CliRunner().invoke(
+        main, ["decode", str(qrout), "-o", str(restored), "--rgb"]
+    )
+    assert result.exit_code == 0, result.output
+    for entry in plan.manifest.files:
+        assert (restored / entry.path).read_bytes() == (
+            source.parent / entry.path
+        ).read_bytes(), entry.path
+
+
+def test_session_record_keeps_rgb_channels() -> None:
+    from qrfile.manifest import build_manifest
+    from qrfile.session import SessionRecord
+
+    layout = choose_layout(1920, 1080, ecc="L", module_px=2, channels=3)
+    manifest = build_manifest(
+        root="src",
+        chunk_size=layout.body_capacity,
+        compression="none",
+    )
+    record = SessionRecord(
+        session_id=b"12345678",
+        chunk_size=layout.body_capacity,
+        data_compression="none",
+        manifest_compression="none",
+        layout=layout,
+        manifest=manifest,
+        sources=("src",),
+        total_frames=1,
+        files=(),
+    )
+    loaded = SessionRecord.from_json(record.to_json())
+    assert loaded.layout.channels == 3
+    assert loaded.layout.per_screen == layout.per_screen
+
+    # 旧版本存档没有 channels 字段，必须默认按普通单通道加载。
+    raw = record.to_json()
+    raw["layout"].pop("channels")
+    legacy = SessionRecord.from_json(raw)
+    assert legacy.layout.channels == 1
+
+
+
 # --------------------------------------------------------------------------
 # 采集参数
 # --------------------------------------------------------------------------
@@ -340,6 +440,14 @@ def test_repair_rebuild_is_byte_identical(tmp_path: Path) -> None:
     assert rebuilt.total == loaded.total_frames
     assert rebuilt.frames == original.frames
     assert rebuilt.manifest.to_bytes() == loaded.manifest.to_bytes()
+
+
+def test_describe_duration_does_not_round_seconds_to_zero_minutes() -> None:
+    from qrfile.live_cli import _describe_duration
+
+    assert "10 秒" in _describe_duration(10)
+    assert "分钟" in _describe_duration(1800)
+    assert "关闭" in _describe_duration(0)
 
 
 def test_parse_region() -> None:
@@ -522,6 +630,68 @@ def test_push_rejects_fast_and_safe_together(tmp_path, monkeypatch) -> None:
 
     result = CliRunner().invoke(live_cli.push_cmd, [str(sample), "--fast", "--safe"])
     assert result.exit_code != 0
+
+
+def test_push_rgb_preset(tmp_path, monkeypatch) -> None:
+    from click.testing import CliRunner
+
+    live_cli, captured = _fake_sender(monkeypatch)
+    sample = tmp_path / "a.txt"
+    sample.write_text("hi", encoding="utf-8")
+
+    result = CliRunner().invoke(live_cli.push_cmd, [str(sample), "--rgb"])
+    assert result.exit_code == 0, result.output
+    assert captured["rgb"] is True
+    assert captured["mode"] == "auto"
+    assert captured["camera"] is False
+
+
+def test_push_rejects_rgb_with_safe_or_camera(tmp_path, monkeypatch) -> None:
+    from click.testing import CliRunner
+
+    live_cli, _captured = _fake_sender(monkeypatch)
+    sample = tmp_path / "a.txt"
+    sample.write_text("hi", encoding="utf-8")
+
+    for flag in ("--safe", "--camera"):
+        result = CliRunner().invoke(
+            live_cli.push_cmd, [str(sample), "--rgb", flag]
+        )
+        assert result.exit_code != 0
+
+
+def test_pull_rgb_option(monkeypatch) -> None:
+    from click.testing import CliRunner
+    from qrfile import live_cli
+
+    monkeypatch.setattr(live_cli, "guess_remote_window", lambda: None)
+    captured: dict = {}
+    monkeypatch.setattr(
+        live_cli, "_receive_loop",
+        lambda output, **kwargs: captured.update(kwargs, output=output),
+    )
+
+    result = CliRunner().invoke(live_cli.pull_cmd, ["outdir", "--rgb"])
+    assert result.exit_code == 0, result.output
+    assert captured["rgb"] is True
+
+
+def test_recv_rgb_option(monkeypatch) -> None:
+    from click.testing import CliRunner
+    from qrfile import live_cli
+
+    monkeypatch.setattr(
+        live_cli, "resolve_region", lambda **kwargs: (None, "整个屏幕")
+    )
+    captured: dict = {}
+    monkeypatch.setattr(
+        live_cli, "_receive_loop",
+        lambda output, **kwargs: captured.update(kwargs, output=output),
+    )
+
+    result = CliRunner().invoke(live_cli.recv_cmd, ["outdir", "--rgb"])
+    assert result.exit_code == 0, result.output
+    assert captured["rgb"] is True
 
 
 def test_pull_auto_locates_window(monkeypatch) -> None:

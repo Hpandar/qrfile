@@ -251,6 +251,8 @@ class MainWindow(QMainWindow):
             args.append("--safe")
         elif mode == "camera":
             args.append("--camera")
+        elif mode == "rgb":
+            args.append("--rgb")
 
         self.send_monitor.reset()
         self._navigate("send_monitor")
@@ -373,6 +375,8 @@ class MainWindow(QMainWindow):
         args = ["pull", str(params["output"]), "--events-json"]
         if params.get("safe"):
             args.append("--safe")
+        if params.get("rgb"):
+            args.append("--rgb")
 
         screen = params.get("screen")
         if screen is not None:

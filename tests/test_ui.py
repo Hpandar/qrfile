@@ -69,6 +69,34 @@ def test_main_window_builds_and_navigates(app) -> None:
         assert window.stack.currentWidget() is window.receive_page
         window._navigate("diag")
         assert window.stack.currentWidget() is window.diagnostics
+        assert window.send_page.mode.findData("rgb") >= 0
+        assert window.receive_page.rgb.isChecked() is False
+    finally:
+        window.close()
+
+
+def test_send_rgb_mode_passes_flag(app, tmp_path) -> None:
+    window = MainWindow()
+    captured: dict = {}
+    window._start_job = lambda args, **kwargs: captured.update(args=args, kwargs=kwargs)
+    sample = tmp_path / "a.txt"
+    sample.write_text("x", encoding="utf-8")
+    try:
+        window._start_send({"path": str(sample), "mode": "rgb", "duration": 10})
+        assert "--rgb" in captured["args"]
+    finally:
+        window.close()
+
+
+def test_receive_rgb_mode_passes_flag(app, tmp_path) -> None:
+    window = MainWindow()
+    captured: dict = {}
+    window._start_job = lambda args, **kwargs: captured.update(args=args, kwargs=kwargs)
+    try:
+        window._launch_receive(
+            {"output": str(tmp_path), "safe": False, "rgb": True}
+        )
+        assert "--rgb" in captured["args"]
     finally:
         window.close()
 

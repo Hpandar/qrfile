@@ -291,9 +291,11 @@ class SendPage(QWidget):
         self.mode.addItem("快速 · 一屏多码（推荐）", "fast")
         self.mode.addItem("稳健 · 一屏一码", "safe")
         self.mode.addItem("手机拍屏 · ECC H", "camera")
+        self.mode.addItem("RGB 三通道 · 3×载荷（需无损采集）", "rgb")
         mode_layout.addWidget(self.mode)
         mode_layout.addWidget(
-            muted("默认快速；远端画面被缩放时选稳健，手机拍屏选手机模式。")
+            muted("默认快速；远端画面被缩放时选稳健，手机拍屏选手机模式；"
+                  "RGB 三通道要求 VNC/本地截屏等无损 RGB 链路。")
         )
         options.addWidget(mode_card, 2)
 
@@ -305,7 +307,9 @@ class SendPage(QWidget):
         self.duration.setSpecialValueText("一直播放")
         self.duration.setValue(int(settings.value("defaults/duration", 1800)))
         duration_layout.addWidget(self.duration)
-        duration_layout.addWidget(muted("防止播放器一直占用屏幕；Esc 可随时退出。"))
+        duration_layout.addWidget(
+            muted("单位是秒：0 = 一直播放，1800 = 30 分钟；Esc 可随时退出。")
+        )
         options.addWidget(duration_card, 1)
         root.addLayout(options)
 
@@ -397,6 +401,8 @@ class ReceivePage(QWidget):
         options_card, options_layout = card_with_title("采集设置")
         self.safe = QCheckBox("稳健解码（远端画面被缩放、识别率低时勾选）")
         options_layout.addWidget(self.safe)
+        self.rgb = QCheckBox("RGB 三通道模式（发送端也必须是 RGB 三通道）")
+        options_layout.addWidget(self.rgb)
 
         screen_row = QHBoxLayout()
         screen_row.addWidget(muted("接收屏幕"))
@@ -485,6 +491,7 @@ class ReceivePage(QWidget):
             {
                 "output": str(output),
                 "safe": self.safe.isChecked(),
+                "rgb": self.rgb.isChecked(),
                 "window": self.window.text().strip(),
                 "region": self.region.text().strip(),
                 "screen": self.screen.currentData(),
@@ -644,6 +651,7 @@ class SendMonitorPage(QWidget):
             "playing": ("播放中", "send"),
             "completed": ("已完成", "send"),
             "cancelled": ("已停止", "warn"),
+            "stopped": ("已停止", "warn"),
         }
         text, kind = mapping.get(state, (state or "运行中", "info"))
         self.header.chip.set_status(text, kind)
@@ -1074,6 +1082,7 @@ class SettingsPage(QWidget):
         self.mode.addItem("快速 · 一屏多码", "fast")
         self.mode.addItem("稳健 · 一屏一码", "safe")
         self.mode.addItem("手机拍屏", "camera")
+        self.mode.addItem("RGB 三通道 · 3×载荷", "rgb")
         mode_row.addWidget(self.mode, 1)
         layout.addLayout(mode_row)
 
@@ -1086,6 +1095,9 @@ class SettingsPage(QWidget):
         self.duration.setSpecialValueText("一直播放")
         duration_row.addWidget(self.duration, 1)
         layout.addLayout(duration_row)
+        layout.addWidget(
+            muted("单位是秒：0 = 一直播放，1800 = 30 分钟。", faint=True)
+        )
 
         layout.addWidget(
             muted("主题、语言和高级采集后端将在后续里程碑提供。", faint=True)
